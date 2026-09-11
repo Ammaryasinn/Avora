@@ -1,0 +1,1442 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductMediaType {
+  IMAGE
+  VIDEO
+}
+
+enum MediaUploadStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum CreativeType {
+  PRODUCT_AD
+  LIFESTYLE_IMAGE
+  VIRTUAL_TRY_ON
+  INSTAGRAM_POST
+  STORY_STATUS
+  AD_COPY_ONLY
+}
+
+enum CreativeStatus {
+  DRAFT
+  GENERATING
+  IN_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
+enum CreativeVariantStatus {
+  DRAFT
+  READY
+  REJECTED
+  ARCHIVED
+}
+
+enum CreativeVariantOrigin {
+  AI_GENERATED
+  AI_EDITED
+  USER_EDITED
+}
+
+enum CreativeAssetKind {
+  IMAGE
+  VIDEO
+}
+
+enum CreativeAssetRole {
+  PRODUCT_REFERENCE
+  PERSON_REFERENCE
+  GENERATED
+  EDITED
+  THUMBNAIL
+}
+
+enum CreativeAssetStatus {
+  PENDING_UPLOAD
+  PROCESSING
+  READY
+  QUARANTINED
+  FAILED
+  DELETED
+}
+
+enum AICapability {
+  GENERATE_TEXT
+  GENERATE_IMAGE
+  EDIT_IMAGE
+  GENERATE_VIRTUAL_TRY_ON
+  GENERATE_VIDEO
+}
+
+enum AIJobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  RETRY_SCHEDULED
+  SUCCEEDED
+  PARTIALLY_SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum AIJobAttemptStatus {
+  SUBMITTING
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ModerationStatus {
+  PENDING
+  PASSED
+  REVIEW_REQUIRED
+  BLOCKED
+}
+
+enum AIJobAssetDirection {
+  INPUT
+  OUTPUT
+}
+
+enum AICostSource {
+  PROVIDER_REPORTED
+  AVORA_ESTIMATED
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY_FOR_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
+enum CampaignObjective {
+  SALES
+  LEADS
+  TRAFFIC
+  AWARENESS
+}
+
+enum CampaignAudienceGender {
+  ALL
+  WOMEN
+  MEN
+}
+
+enum CampaignBudgetType {
+  DAILY
+  LIFETIME
+}
+
+enum CampaignCreativeSource {
+  APPROVED_CREATIVE
+  MANUAL_UPLOAD
+}
+
+enum MetaConnectionStatus {
+  CONNECTED
+  DEGRADED
+  EXPIRED
+  REVOKED
+  DISCONNECTED
+}
+
+enum MetaAssetAccessStatus {
+  ACCESSIBLE
+  INACCESSIBLE
+  REMOVED
+}
+
+enum MetaPublicationStatus {
+  NOT_CONFIGURED
+  NEEDS_CONNECTION
+  CONFIGURING
+  VALIDATING
+  INVALID
+  READY_FOR_APPROVAL
+  APPROVED
+  QUEUED
+  PUBLISHING
+  PUBLISHED_PAUSED
+  PARTIALLY_PUBLISHED
+  FAILED
+  RECONCILIATION_REQUIRED
+  DISCONNECTED
+}
+
+enum MetaValidationStatus {
+  PASSED
+  FAILED
+}
+
+enum MetaPublishJobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  RETRY_SCHEDULED
+  SUCCEEDED
+  FAILED
+  RECONCILIATION_REQUIRED
+  CANCELLED
+}
+
+enum MetaPublishStepType {
+  CAMPAIGN
+  MEDIA
+  AD_SET
+  CREATIVE
+  AD
+  STATUS_SYNC
+}
+
+enum MetaPublishStepStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  RETRYABLE_FAILED
+  TERMINAL_FAILED
+  AMBIGUOUS
+  RECONCILING
+}
+
+enum MetaAudienceTargetType {
+  COUNTRY
+  REGION
+  CITY
+  INTEREST
+}
+
+enum MetaConversionLocation {
+  WEBSITE
+}
+
+enum MetaOptimizationGoal {
+  REACH
+  IMPRESSIONS
+  LINK_CLICKS
+  LANDING_PAGE_VIEWS
+  OFFSITE_CONVERSIONS
+}
+
+enum MetaCallToAction {
+  SHOP_NOW
+  LEARN_MORE
+  SIGN_UP
+  CONTACT_US
+}
+
+model User {
+  id          String   @id @default(cuid())
+  clerkUserId String   @unique
+  email       String
+  firstName   String?
+  lastName    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships          OrganizationMember[]
+  createdOrganizations Organization[]       @relation("OrganizationCreator")
+  createdCreatives     Creative[]            @relation("CreativeCreator")
+  createdVariants      CreativeVariant[]     @relation("CreativeVariantCreator")
+  createdAIJobs        AIJob[]               @relation("AIJobCreator")
+  creativeApprovals    CreativeApproval[]    @relation("CreativeApprover")
+  createdCampaigns     Campaign[]            @relation("CampaignCreator")
+  metaOAuthStates      MetaOAuthState[]       @relation("MetaOAuthInitiator")
+  metaConnections      MetaConnection[]       @relation("MetaConnector")
+  metaCreativeApprovals CampaignCreativeApproval[] @relation("CampaignCreativeApprover")
+  metaValidations      MetaCampaignValidation[] @relation("MetaValidator")
+  metaPublishApprovals MetaPublishApproval[]  @relation("MetaPublishApprover")
+  metaPublishJobs      MetaPublishJob[]       @relation("MetaPublishInitiator")
+  metaAuditEvents      MetaAuditEvent[]       @relation("MetaAuditActor")
+
+  @@index([email])
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy       User                 @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  members         OrganizationMember[]
+  businessProfile BusinessProfile?
+  products        Product[]
+  productVariants ProductVariant[]
+  productMedia    ProductMedia[]
+  inventory       InventoryRecord[]
+  creatives       Creative[]
+  creativeVariants CreativeVariant[]
+  creativeAssets   CreativeAsset[]
+  aiJobs           AIJob[]
+  aiJobAttempts    AIJobAttempt[]
+  aiJobAssets      AIJobAsset[]
+  creativeApprovals CreativeApproval[]
+  aiSettings       OrganizationAISettings?
+  aiUsagePeriods   AIUsagePeriod[]
+  campaigns        Campaign[]
+  campaignProducts CampaignProduct[]
+  campaignCreatives CampaignCreative[]
+  campaignAudiences CampaignAudience[]
+  campaignBudgets   CampaignBudget[]
+  metaOAuthStates   MetaOAuthState[]
+  metaConnections   MetaConnection[]
+  metaBusinesses    MetaBusiness[]
+  metaAdAccounts    MetaAdAccount[]
+  metaPages         MetaPage[]
+  metaInstagramAccounts MetaInstagramAccount[]
+  metaDatasets      MetaDataset[]
+  metaSettings      OrganizationMetaSettings?
+  metaCampaignConfigurations CampaignMetaConfiguration[]
+  metaAudienceTargets CampaignMetaAudienceTarget[]
+  metaCampaignAds   CampaignMetaAd[]
+  metaCreativeApprovals CampaignCreativeApproval[]
+  metaValidations   MetaCampaignValidation[]
+  metaPublishApprovals MetaPublishApproval[]
+  metaPublishJobs   MetaPublishJob[]
+  metaPublishSteps  MetaPublishStep[]
+  metaPublishAttempts MetaPublishAttempt[]
+  metaCampaignMappings MetaCampaignMapping[]
+  metaAdSetMappings MetaAdSetMapping[]
+  metaMediaMappings MetaMediaMapping[]
+  metaCreativeMappings MetaCreativeMapping[]
+  metaAdMappings    MetaAdMapping[]
+  metaAuditEvents   MetaAuditEvent[]
+
+  @@index([createdById])
+}
+
+model OrganizationMember {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@index([organizationId, role])
+}
+
+model BusinessProfile {
+  id             String   @id @default(cuid())
+  organizationId String   @unique
+  displayName    String
+  industry       String?
+  countryCode    String   @db.VarChar(2)
+  currencyCode   String   @db.VarChar(3)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id                  String         @id @default(cuid())
+  organizationId      String
+  name                String
+  description         String?
+  price               Decimal        @db.Decimal(12, 2)
+  category            String?
+  sku                 String?
+  status              ProductStatus  @default(DRAFT)
+  statusBeforeArchive ProductStatus?
+  archivedAt          DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  variants     ProductVariant[]
+  media        ProductMedia[]
+  creatives    Creative[]
+  campaignProducts CampaignProduct[]
+
+  @@unique([organizationId, sku])
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
+  @@index([organizationId, name])
+}
+
+model ProductVariant {
+  id             String   @id @default(cuid())
+  organizationId String
+  productId      String
+  name           String
+  sku            String?
+  size           String?
+  color          String?
+  price          Decimal? @db.Decimal(12, 2)
+  position       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  media        ProductMedia[]
+  inventory    InventoryRecord?
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, productId])
+}
+
+model ProductMedia {
+  id             String           @id @default(cuid())
+  organizationId String
+  productId      String
+  variantId      String?
+  type           ProductMediaType @default(IMAGE)
+  storageKey     String?
+  url            String?
+  mimeType       String?
+  altText        String?
+  position       Int              @default(0)
+  storageProvider String?
+  bucket          String?
+  fileSizeBytes   BigInt?
+  width           Int?
+  height          Int?
+  checksumSha256  String?
+  uploadStatus    MediaUploadStatus @default(PENDING)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  creativeAssets CreativeAsset[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, productId])
+  @@index([organizationId, variantId])
+}
+
+model InventoryRecord {
+  id               String   @id @default(cuid())
+  organizationId   String
+  variantId        String   @unique
+  quantityOnHand   Int      @default(0)
+  quantityReserved Int      @default(0)
+  reorderLevel     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  variant      ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Creative {
+  id                String         @id @default(cuid())
+  organizationId    String
+  productId         String?
+  title             String
+  type              CreativeType
+  status            CreativeStatus @default(DRAFT)
+  brief             Json
+  briefSchemaVersion Int           @default(1)
+  selectedVariantId String?
+  createdById       String
+  archivedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product         Product?          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  createdBy       User              @relation("CreativeCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  variants        CreativeVariant[] @relation("CreativeVariants")
+  selectedVariant CreativeVariant?  @relation("SelectedCreativeVariant", fields: [selectedVariantId], references: [id], onDelete: SetNull)
+  assets          CreativeAsset[]
+  jobs            AIJob[]
+  approvals       CreativeApproval[]
+  campaignCreatives CampaignCreative[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status, updatedAt])
+  @@index([organizationId, productId])
+  @@index([createdById])
+}
+
+model CreativeVariant {
+  id                   String                @id @default(cuid())
+  organizationId       String
+  creativeId           String
+  sourceJobId          String?
+  parentVariantId      String?
+  createdById          String
+  name                 String
+  origin               CreativeVariantOrigin
+  status               CreativeVariantStatus @default(DRAFT)
+  position             Int                   @default(0)
+  content              Json
+  contentSchemaVersion Int                   @default(1)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creative     Creative          @relation("CreativeVariants", fields: [creativeId], references: [id], onDelete: Cascade)
+  selectedBy   Creative[]        @relation("SelectedCreativeVariant")
+  sourceJob    AIJob?            @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
+  parent       CreativeVariant?  @relation("CreativeVariantLineage", fields: [parentVariantId], references: [id], onDelete: SetNull)
+  children     CreativeVariant[] @relation("CreativeVariantLineage")
+  createdBy    User              @relation("CreativeVariantCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assets       CreativeAsset[]
+  approvals    CreativeApproval[]
+  campaignCreatives CampaignCreative[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, creativeId, status])
+  @@index([sourceJobId])
+  @@index([parentVariantId])
+}
+
+model CreativeAsset {
+  id                   String              @id @default(cuid())
+  organizationId       String
+  creativeId           String
+  variantId            String?
+  sourceProductMediaId String?
+  generatedByAttemptId String?
+  parentAssetId        String?
+  kind                 CreativeAssetKind
+  role                 CreativeAssetRole
+  status               CreativeAssetStatus @default(PENDING_UPLOAD)
+  storageProvider      String
+  bucket               String
+  storageKey           String
+  originalFileName     String?
+  mimeType             String?
+  fileSizeBytes        BigInt?
+  width                Int?
+  height               Int?
+  checksumSha256       String?
+  altText              String?
+  metadata             Json?
+  expiresAt            DateTime?
+  deletedAt            DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  organization      Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creative          Creative          @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  variant           CreativeVariant?  @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  sourceProductMedia ProductMedia?     @relation(fields: [sourceProductMediaId], references: [id], onDelete: SetNull)
+  generatedByAttempt AIJobAttempt?     @relation(fields: [generatedByAttemptId], references: [id], onDelete: SetNull)
+  parent             CreativeAsset?    @relation("CreativeAssetLineage", fields: [parentAssetId], references: [id], onDelete: SetNull)
+  children           CreativeAsset[]   @relation("CreativeAssetLineage")
+  jobLinks           AIJobAsset[]
+  campaignCreatives  CampaignCreative[]
+
+  @@unique([organizationId, id])
+  @@unique([storageProvider, bucket, storageKey])
+  @@index([organizationId, creativeId, status])
+  @@index([organizationId, expiresAt])
+  @@index([variantId])
+}
+
+model AIJob {
+  id                    String           @id @default(cuid())
+  organizationId        String
+  creativeId            String
+  createdById           String
+  capability            AICapability
+  status                AIJobStatus      @default(PENDING)
+  moderationStatus      ModerationStatus @default(PENDING)
+  idempotencyKey        String
+  requestFingerprint    String
+  promptTemplateKey     String
+  promptTemplateVersion Int              @default(1)
+  input                  Json
+  requestedVariantCount Int              @default(1)
+  reservedCost           Decimal          @default(0) @db.Decimal(18, 8)
+  actualCost             Decimal          @default(0) @db.Decimal(18, 8)
+  costCurrency           String           @default("USD") @db.VarChar(3)
+  attemptCount           Int              @default(0)
+  maxAttempts            Int              @default(3)
+  availableAt            DateTime         @default(now())
+  lockedAt               DateTime?
+  lockedBy               String?
+  leaseExpiresAt         DateTime?
+  queuedAt               DateTime?
+  startedAt              DateTime?
+  completedAt            DateTime?
+  failedAt               DateTime?
+  errorCode              String?
+  errorMessage           String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creative     Creative          @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  createdBy    User              @relation("AIJobCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  variants     CreativeVariant[]
+  attempts     AIJobAttempt[]
+  assets       AIJobAsset[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, idempotencyKey])
+  @@index([status, availableAt, leaseExpiresAt])
+  @@index([organizationId, creativeId, createdAt])
+  @@index([organizationId, status])
+}
+
+model AIJobAttempt {
+  id                String             @id @default(cuid())
+  organizationId    String
+  jobId             String
+  attemptNumber     Int
+  providerKey       String
+  modelId           String
+  providerRequestId String?
+  providerStatus    String?
+  status            AIJobAttemptStatus @default(SUBMITTING)
+  requestMetadata   Json?
+  responseMetadata  Json?
+  usage             Json?
+  inputTokens       BigInt?
+  outputTokens      BigInt?
+  imageCount        Int?
+  durationMs        Int?
+  cost              Decimal            @default(0) @db.Decimal(18, 8)
+  costCurrency      String              @default("USD") @db.VarChar(3)
+  costSource        AICostSource        @default(AVORA_ESTIMATED)
+  errorCode         String?
+  errorMessage      String?
+  startedAt         DateTime            @default(now())
+  completedAt       DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          AIJob           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  generatedAssets CreativeAsset[]
+
+  @@unique([organizationId, id])
+  @@unique([jobId, attemptNumber])
+  @@unique([providerKey, providerRequestId])
+  @@index([organizationId, status])
+}
+
+model AIJobAsset {
+  id             String              @id @default(cuid())
+  organizationId String
+  jobId          String
+  assetId        String
+  direction      AIJobAssetDirection
+  role           CreativeAssetRole
+  createdAt      DateTime            @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          AIJob         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  asset        CreativeAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, assetId, direction])
+  @@index([organizationId, jobId])
+}
+
+model CreativeApproval {
+  id             String   @id @default(cuid())
+  organizationId String
+  creativeId     String
+  variantId      String
+  approvedById   String
+  approvedAt     DateTime @default(now())
+  supersededAt   DateTime?
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creative     Creative         @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  variant      CreativeVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  approvedBy   User             @relation("CreativeApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, creativeId, approvedAt])
+  @@index([variantId])
+}
+
+model OrganizationAISettings {
+  id                    String   @id @default(cuid())
+  organizationId        String   @unique
+  enabled               Boolean  @default(true)
+  textEnabled           Boolean  @default(true)
+  imageEnabled          Boolean  @default(true)
+  imageEditEnabled      Boolean  @default(true)
+  virtualTryOnEnabled   Boolean  @default(true)
+  monthlyBudget         Decimal  @default(10) @db.Decimal(18, 8)
+  perJobLimit           Decimal  @default(2) @db.Decimal(18, 8)
+  maxConcurrentJobs     Int      @default(2)
+  maxRequestsPerMinute  Int      @default(10)
+  personRetentionDays   Int      @default(7)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model AIUsagePeriod {
+  id             String   @id @default(cuid())
+  organizationId String
+  periodStart    DateTime
+  periodEnd      DateTime
+  budget         Decimal  @db.Decimal(18, 8)
+  reservedCost   Decimal  @default(0) @db.Decimal(18, 8)
+  consumedCost   Decimal  @default(0) @db.Decimal(18, 8)
+  currency       String   @default("USD") @db.VarChar(3)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, periodStart])
+  @@index([organizationId, periodEnd])
+}
+
+model Campaign {
+  id             String            @id @default(cuid())
+  organizationId String
+  name           String
+  objective      CampaignObjective?
+  status         CampaignStatus    @default(DRAFT)
+  notes          String?
+  createdById    String
+  archivedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User               @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  products     CampaignProduct[]
+  creatives    CampaignCreative[]
+  audience     CampaignAudience?
+  budget       CampaignBudget?
+  metaConfiguration CampaignMetaConfiguration?
+  metaPublishApprovals MetaPublishApproval[]
+  metaPublishJobs MetaPublishJob[]
+  metaCampaignMapping MetaCampaignMapping?
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status, updatedAt])
+  @@index([createdById])
+}
+
+model CampaignProduct {
+  id             String   @id @default(cuid())
+  organizationId String
+  campaignId     String
+  productId      String
+  position       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  metaAds      CampaignMetaAd[]
+
+  @@unique([organizationId, id])
+  @@unique([campaignId, productId])
+  @@index([organizationId, campaignId])
+  @@index([organizationId, productId])
+}
+
+model CampaignCreative {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  campaignId        String
+  source            CampaignCreativeSource
+  creativeId        String?
+  variantId         String?
+  creativeAssetId   String?
+  label             String?
+  storageProvider   String?
+  bucket             String?
+  storageKey         String?
+  originalFileName  String?
+  mimeType           String?
+  fileSizeBytes      BigInt?
+  checksumSha256     String?
+  altText            String?
+  uploadStatus       MediaUploadStatus      @default(READY)
+  position           Int                    @default(0)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign         @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creative     Creative?        @relation(fields: [creativeId], references: [id], onDelete: Restrict)
+  variant      CreativeVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  creativeAsset CreativeAsset?  @relation(fields: [creativeAssetId], references: [id], onDelete: Restrict)
+  metaAds       CampaignMetaAd[]
+  metaApprovals CampaignCreativeApproval[]
+  metaMediaMappings MetaMediaMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([campaignId, creativeId])
+  @@unique([storageProvider, bucket, storageKey])
+  @@index([organizationId, campaignId, source])
+  @@index([organizationId, creativeId])
+  @@index([creativeAssetId])
+}
+
+model CampaignAudience {
+  id                        String                  @id @default(cuid())
+  organizationId            String
+  campaignId                String                  @unique
+  countryCode               String?                 @db.VarChar(2)
+  regions                   String[]                @default([])
+  cities                    String[]                @default([])
+  minimumAge                Int?
+  maximumAge                Int?
+  gender                    CampaignAudienceGender?
+  interests                 String[]                @default([])
+  notes                     String?
+  customAudienceDescription String?
+  createdAt                 DateTime                @default(now())
+  updatedAt                 DateTime                @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, campaignId])
+}
+
+model CampaignBudget {
+  id             String              @id @default(cuid())
+  organizationId String
+  campaignId     String              @unique
+  type           CampaignBudgetType?
+  dailyBudget    Decimal?            @db.Decimal(12, 2)
+  lifetimeBudget Decimal?            @db.Decimal(12, 2)
+  currencyCode   String              @db.VarChar(3)
+  startDate      DateTime?           @db.Date
+  endDate        DateTime?           @db.Date
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, campaignId])
+}
+
+model MetaOAuthState {
+  id             String   @id @default(cuid())
+  organizationId String
+  initiatedById  String
+  stateHash      String   @unique
+  redirectPath   String
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  initiatedBy  User         @relation("MetaOAuthInitiator", fields: [initiatedById], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, expiresAt])
+  @@index([initiatedById])
+}
+
+model MetaConnection {
+  id                  String               @id @default(cuid())
+  organizationId      String
+  connectedById       String
+  metaUserId          String
+  metaUserName        String?
+  status              MetaConnectionStatus @default(CONNECTED)
+  scopes              String[]             @default([])
+  tokenCiphertext     Bytes
+  tokenIv             Bytes
+  tokenAuthTag        Bytes
+  tokenKeyVersion     String
+  tokenExpiresAt      DateTime?
+  dataAccessExpiresAt DateTime?
+  lastValidatedAt     DateTime?
+  lastErrorCode       String?
+  lastErrorMessage    String?
+  disconnectedAt      DateTime?
+  revokedAt           DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy  User         @relation("MetaConnector", fields: [connectedById], references: [id], onDelete: Restrict)
+  businesses   MetaBusiness[]
+  adAccounts   MetaAdAccount[]
+  pages        MetaPage[]
+  instagramAccounts MetaInstagramAccount[]
+  datasets     MetaDataset[]
+  configurations CampaignMetaConfiguration[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, metaUserId])
+  @@index([organizationId, status])
+  @@index([connectedById])
+}
+
+model MetaBusiness {
+  id             String                @id @default(cuid())
+  organizationId String
+  connectionId   String
+  externalId     String
+  name           String
+  verificationStatus String?
+  accessStatus   MetaAssetAccessStatus @default(ACCESSIBLE)
+  lastSeenAt     DateTime              @default(now())
+  lastSyncedAt   DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  adAccounts   MetaAdAccount[]
+  pages        MetaPage[]
+  datasets     MetaDataset[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, externalId])
+  @@index([organizationId, accessStatus])
+}
+
+model MetaAdAccount {
+  id                    String                @id @default(cuid())
+  organizationId        String
+  connectionId          String
+  businessId            String?
+  externalId            String
+  name                  String
+  currencyCode          String                @db.VarChar(3)
+  timezoneName          String?
+  timezoneOffsetMinutes Int?
+  accountStatus         String?
+  disableReason         String?
+  accessStatus          MetaAssetAccessStatus @default(ACCESSIBLE)
+  capabilities          Json?
+  lastSeenAt            DateTime              @default(now())
+  lastSyncedAt          DateTime              @default(now())
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  business     MetaBusiness?  @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  datasets     MetaDataset[]
+  configurations CampaignMetaConfiguration[]
+  campaignMappings MetaCampaignMapping[]
+  mediaMappings MetaMediaMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, externalId])
+  @@index([organizationId, accessStatus])
+  @@index([businessId])
+}
+
+model MetaPage {
+  id             String                @id @default(cuid())
+  organizationId String
+  connectionId   String
+  businessId     String?
+  externalId     String
+  name           String
+  tasks          String[]              @default([])
+  accessStatus   MetaAssetAccessStatus @default(ACCESSIBLE)
+  lastSeenAt     DateTime              @default(now())
+  lastSyncedAt   DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  business     MetaBusiness?  @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  instagramAccounts MetaInstagramAccount[]
+  configurations CampaignMetaConfiguration[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, externalId])
+  @@index([organizationId, accessStatus])
+  @@index([businessId])
+}
+
+model MetaInstagramAccount {
+  id             String                @id @default(cuid())
+  organizationId String
+  connectionId   String
+  pageId         String
+  externalId     String
+  username       String?
+  name           String?
+  accessStatus   MetaAssetAccessStatus @default(ACCESSIBLE)
+  lastSeenAt     DateTime              @default(now())
+  lastSyncedAt   DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  page         MetaPage       @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  configurations CampaignMetaConfiguration[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, externalId])
+  @@index([organizationId, accessStatus])
+  @@index([pageId])
+}
+
+model MetaDataset {
+  id             String                @id @default(cuid())
+  organizationId String
+  connectionId   String
+  businessId     String?
+  adAccountId    String?
+  externalId     String
+  name           String
+  accessStatus   MetaAssetAccessStatus @default(ACCESSIBLE)
+  lastSeenAt     DateTime              @default(now())
+  lastSyncedAt   DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   MetaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  business     MetaBusiness?  @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  adAccount    MetaAdAccount? @relation(fields: [adAccountId], references: [id], onDelete: SetNull)
+  configurations CampaignMetaConfiguration[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, externalId])
+  @@index([organizationId, accessStatus])
+  @@index([businessId])
+  @@index([adAccountId])
+}
+
+model OrganizationMetaSettings {
+  id                        String   @id @default(cuid())
+  organizationId            String   @unique
+  publishingEnabled         Boolean  @default(false)
+  defaultConnectionId       String?
+  defaultBusinessId         String?
+  defaultAdAccountId        String?
+  defaultPageId             String?
+  defaultInstagramAccountId String?
+  defaultDatasetId          String?
+  lastAssetSyncAt           DateTime?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model CampaignMetaConfiguration {
+  id                 String                @id @default(cuid())
+  organizationId     String
+  campaignId         String                @unique
+  connectionId       String
+  adAccountId        String
+  pageId             String
+  instagramAccountId String?
+  datasetId          String?
+  status             MetaPublicationStatus @default(CONFIGURING)
+  conversionLocation MetaConversionLocation @default(WEBSITE)
+  optimizationGoal   MetaOptimizationGoal?
+  callToAction       MetaCallToAction?
+  specialAdCategories String[]             @default([])
+  beneficiaryName    String?
+  payorName          String?
+  configurationVersion Int                 @default(1)
+  lastValidatedHash  String?
+  lastValidatedAt    DateTime?
+  lastApprovedHash   String?
+  lastApprovedAt     DateTime?
+  lastPublishedAt    DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign             @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  connection   MetaConnection       @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  adAccount    MetaAdAccount        @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  page         MetaPage             @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  instagramAccount MetaInstagramAccount? @relation(fields: [instagramAccountId], references: [id], onDelete: Restrict)
+  dataset      MetaDataset?         @relation(fields: [datasetId], references: [id], onDelete: Restrict)
+  audienceTargets CampaignMetaAudienceTarget[]
+  ads          CampaignMetaAd[]
+  validations  MetaCampaignValidation[]
+  approvals    MetaPublishApproval[]
+  jobs         MetaPublishJob[]
+  campaignMapping MetaCampaignMapping?
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
+  @@index([connectionId])
+  @@index([adAccountId])
+  @@index([pageId])
+}
+
+model CampaignMetaAudienceTarget {
+  id             String                 @id @default(cuid())
+  organizationId String
+  configurationId String
+  type           MetaAudienceTargetType
+  sourceValue    String
+  externalKey    String
+  externalName   String
+  countryCode    String?                @db.VarChar(2)
+  isValid        Boolean                @default(true)
+  invalidReason  String?
+  resolvedAt     DateTime               @default(now())
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([configurationId, type, externalKey])
+  @@index([organizationId, configurationId])
+}
+
+model CampaignMetaAd {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  configurationId    String
+  campaignCreativeId String
+  campaignProductId  String?
+  destinationUrl     String
+  primaryText        String
+  headline           String?
+  description        String?
+  callToAction       MetaCallToAction
+  position           Int              @default(0)
+  enabled            Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+  campaignCreative CampaignCreative      @relation(fields: [campaignCreativeId], references: [id], onDelete: Restrict)
+  campaignProduct  CampaignProduct?      @relation(fields: [campaignProductId], references: [id], onDelete: Restrict)
+  creativeMapping MetaCreativeMapping?
+  adMapping       MetaAdMapping?
+
+  @@unique([organizationId, id])
+  @@index([organizationId, configurationId])
+  @@index([campaignCreativeId])
+  @@index([campaignProductId])
+}
+
+model CampaignCreativeApproval {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  campaignCreativeId String
+  approvedById       String
+  assetChecksum      String?
+  approvedAt         DateTime  @default(now())
+  supersededAt       DateTime?
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignCreative CampaignCreative @relation(fields: [campaignCreativeId], references: [id], onDelete: Cascade)
+  approvedBy   User             @relation("CampaignCreativeApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, campaignCreativeId, approvedAt])
+  @@index([approvedById])
+}
+
+model MetaCampaignValidation {
+  id              String               @id @default(cuid())
+  organizationId  String
+  configurationId String
+  validatedById   String
+  snapshotHash    String
+  status          MetaValidationStatus
+  errors          Json
+  warnings        Json
+  providerMetadata Json?
+  expiresAt       DateTime
+  createdAt       DateTime             @default(now())
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+  validatedBy   User                     @relation("MetaValidator", fields: [validatedById], references: [id], onDelete: Restrict)
+  approvals     MetaPublishApproval[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, configurationId, createdAt])
+  @@index([snapshotHash])
+}
+
+model MetaPublishApproval {
+  id              String    @id @default(cuid())
+  organizationId  String
+  campaignId      String
+  configurationId String
+  validationId    String
+  approvedById    String
+  snapshotHash    String
+  approvedAt      DateTime  @default(now())
+  revokedAt       DateTime?
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+  validation   MetaCampaignValidation   @relation(fields: [validationId], references: [id], onDelete: Restrict)
+  approvedBy   User                     @relation("MetaPublishApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  jobs         MetaPublishJob[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, configurationId, snapshotHash])
+  @@index([campaignId])
+  @@index([approvedById])
+}
+
+model MetaPublishJob {
+  id              String               @id @default(cuid())
+  organizationId  String
+  campaignId      String
+  configurationId String
+  approvalId      String
+  initiatedById   String
+  idempotencyKey  String
+  snapshotHash    String
+  snapshot        Json
+  status          MetaPublishJobStatus @default(PENDING)
+  attemptCount    Int                  @default(0)
+  maxAttempts     Int                  @default(5)
+  availableAt     DateTime             @default(now())
+  lockedAt        DateTime?
+  lockedBy        String?
+  leaseExpiresAt  DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  failedAt        DateTime?
+  errorCode       String?
+  errorMessage    String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+  approval     MetaPublishApproval      @relation(fields: [approvalId], references: [id], onDelete: Restrict)
+  initiatedBy  User                     @relation("MetaPublishInitiator", fields: [initiatedById], references: [id], onDelete: Restrict)
+  steps         MetaPublishStep[]
+  campaignMappings MetaCampaignMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, idempotencyKey])
+  @@index([status, availableAt, leaseExpiresAt])
+  @@index([organizationId, campaignId, createdAt])
+}
+
+model MetaPublishStep {
+  id             String                @id @default(cuid())
+  organizationId String
+  jobId          String
+  type           MetaPublishStepType
+  localKey       String
+  requestFingerprint String
+  publicationMarker  String
+  externalId     String?
+  status         MetaPublishStepStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  errorCode      String?
+  errorMessage   String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          MetaPublishJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  attempts     MetaPublishAttempt[]
+
+  @@unique([organizationId, id])
+  @@unique([jobId, type, localKey])
+  @@index([organizationId, status])
+}
+
+model MetaPublishAttempt {
+  id             String                @id @default(cuid())
+  organizationId String
+  stepId         String
+  attemptNumber  Int
+  status         MetaPublishStepStatus
+  providerTraceId String?
+  httpStatus     Int?
+  errorCode      String?
+  errorSubcode   String?
+  errorMessage   String?
+  retryAfterSeconds Int?
+  responseMetadata Json?
+  startedAt      DateTime              @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime              @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  step         MetaPublishStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@unique([stepId, attemptNumber])
+  @@index([organizationId, status])
+}
+
+model MetaCampaignMapping {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  campaignId         String   @unique
+  configurationId    String   @unique
+  publishJobId       String
+  adAccountId        String
+  externalCampaignId String
+  configuredStatus   String   @default("PAUSED")
+  effectiveStatus    String?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign     Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  configuration CampaignMetaConfiguration @relation(fields: [configurationId], references: [id], onDelete: Restrict)
+  publishJob   MetaPublishJob           @relation(fields: [publishJobId], references: [id], onDelete: Restrict)
+  adAccount    MetaAdAccount            @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  adSets       MetaAdSetMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, adAccountId, externalCampaignId])
+  @@index([organizationId, effectiveStatus])
+}
+
+model MetaAdSetMapping {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  campaignMappingId  String
+  localKey           String
+  externalAdSetId    String
+  configuredStatus   String   @default("PAUSED")
+  effectiveStatus    String?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignMapping MetaCampaignMapping @relation(fields: [campaignMappingId], references: [id], onDelete: Cascade)
+  ads          MetaAdMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([campaignMappingId, localKey])
+  @@unique([organizationId, externalAdSetId])
+  @@index([organizationId, effectiveStatus])
+}
+
+model MetaMediaMapping {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  adAccountId        String
+  campaignCreativeId String
+  assetChecksum      String
+  externalImageHash  String
+  externalImageId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  adAccount    MetaAdAccount  @relation(fields: [adAccountId], references: [id], onDelete: Restrict)
+  campaignCreative CampaignCreative @relation(fields: [campaignCreativeId], references: [id], onDelete: Restrict)
+  creativeMappings MetaCreativeMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, adAccountId, campaignCreativeId, assetChecksum])
+  @@index([organizationId, externalImageHash])
+}
+
+model MetaCreativeMapping {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  campaignMetaAdId   String   @unique
+  mediaMappingId     String
+  externalCreativeId String
+  effectiveStatus    String?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignMetaAd CampaignMetaAd @relation(fields: [campaignMetaAdId], references: [id], onDelete: Restrict)
+  mediaMapping MetaMediaMapping @relation(fields: [mediaMappingId], references: [id], onDelete: Restrict)
+  ads          MetaAdMapping[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, externalCreativeId])
+  @@index([mediaMappingId])
+}
+
+model MetaAdMapping {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  campaignMetaAdId   String   @unique
+  adSetMappingId     String
+  creativeMappingId  String
+  externalAdId       String
+  configuredStatus   String   @default("PAUSED")
+  effectiveStatus    String?
+  reviewFeedback     Json?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaignMetaAd CampaignMetaAd @relation(fields: [campaignMetaAdId], references: [id], onDelete: Restrict)
+  adSetMapping MetaAdSetMapping @relation(fields: [adSetMappingId], references: [id], onDelete: Restrict)
+  creativeMapping MetaCreativeMapping @relation(fields: [creativeMappingId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, externalAdId])
+  @@index([organizationId, effectiveStatus])
+}
+
+model MetaAuditEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorUserId    String?
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("MetaAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}

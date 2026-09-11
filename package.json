@@ -1,0 +1,49 @@
+{
+  "name": "avora",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run lint && npm run typecheck",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "ai:worker": "node --env-file=.env scripts/ai-worker.mjs",
+    "meta:worker": "node --env-file=.env scripts/meta-publish-worker.mjs",
+    "postinstall": "prisma generate"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1130.0",
+    "@aws-sdk/s3-request-presigner": "^3.1130.0",
+    "@clerk/nextjs": "^7.9.2",
+    "@fal-ai/client": "^1.10.1",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "next": "16.3.4",
+    "openai": "^7.15.0",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.6.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "prisma": "^7.10.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
