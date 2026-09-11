@@ -1,19 +1,16 @@
 import Link from "next/link";
 
 import { Container } from "@/components/ui/container";
-import { BrandMark } from "@/components/ui/brand-mark";
+import { AvoraLogo } from "@/components/ui/avora-logo";
 import { siteConfig } from "@/config/site";
 
 export function SiteFooter() {
   return (
-    <footer className="relative border-t border-slate-300/10 py-8">
+    <footer id="footer" className="relative border-t border-border py-8">
       <Container className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <BrandMark className="scale-90" />
+          <AvoraLogo showMark markClassName="h-7" wordmarkClassName="text-lg" />
           <div>
-            <p className="brand-wordmark text-sm text-foreground">
-              {siteConfig.name}
-            </p>
             <p className="mt-0.5 text-xs text-text-muted">
               A focused foundation for modern revenue teams.
             </p>
