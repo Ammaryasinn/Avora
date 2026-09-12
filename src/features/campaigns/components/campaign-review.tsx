@@ -1,6 +1,11 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 
+import {
+  approveManualCampaignCreativeAction,
+  revokeManualCampaignCreativeApprovalAction,
+} from "@/features/meta/server/actions";
+
 import type { getCampaignForBuilder } from "../server/queries";
 import { getCampaignReadinessIssues } from "../server/schema";
 import { ReviewActions } from "./campaign-step-forms";
@@ -91,6 +96,11 @@ export function CampaignReview({
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {campaign.creatives.map((item) => {
               const manual = item.source === "MANUAL_UPLOAD";
+              const approvedForPaidMedia = Boolean(
+                manual &&
+                item.checksumSha256 &&
+                item.metaApprovals[0]?.assetChecksum === item.checksumSha256,
+              );
               const imageUrl = manual
                 ? `/api/storage/campaign-assets/${item.id}`
                 : item.creativeAsset
@@ -104,6 +114,46 @@ export function CampaignReview({
                   <div className="p-4">
                     <p className="truncate text-sm font-semibold">{manual ? item.label ?? "Manual asset" : item.creative?.title ?? "Approved creative"}</p>
                     <p className="mt-1 text-xs text-text-muted">{manual ? "Manual upload" : "Approved Creative Studio work"}</p>
+                    {manual ? (
+                      <div className="mt-4 border-t border-border pt-4">
+                        <span
+                          className={`status-pill ${approvedForPaidMedia ? "status-success" : "status-warning"}`}
+                        >
+                          {approvedForPaidMedia
+                            ? "Approved for paid media"
+                            : "Paid media approval required"}
+                        </span>
+                        {canManage && campaign.status !== "ARCHIVED" ? (
+                          <form
+                            className="mt-3"
+                            action={
+                              approvedForPaidMedia
+                                ? revokeManualCampaignCreativeApprovalAction.bind(
+                                    null,
+                                    organizationSlug,
+                                    campaign.id,
+                                    item.id,
+                                  )
+                                : approveManualCampaignCreativeAction.bind(
+                                    null,
+                                    organizationSlug,
+                                    campaign.id,
+                                    item.id,
+                                  )
+                            }
+                          >
+                            <button
+                              className="button-secondary w-full"
+                              disabled={!approvedForPaidMedia && !item.checksumSha256}
+                            >
+                              {approvedForPaidMedia
+                                ? "Revoke paid media approval"
+                                : "Approve for paid media"}
+                            </button>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );

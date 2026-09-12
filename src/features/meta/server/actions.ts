@@ -234,24 +234,40 @@ export async function approveManualCampaignCreativeAction(
 ) {
   const tenant = await requireTenantContext(organizationSlug, managers);
   const user = await ensureCurrentUser();
-  const creative = await getDatabase().campaignCreative.findFirst({
+  const database = getDatabase();
+  const creative = await database.campaignCreative.findFirst({
     where: {
       id: campaignCreativeId,
       campaignId,
       organizationId: tenant.organizationId,
       source: "MANUAL_UPLOAD",
       uploadStatus: "READY",
+      checksumSha256: { not: null },
+      campaign: { status: { not: "ARCHIVED" } },
     },
+    select: { id: true, checksumSha256: true },
   });
   if (!creative) return;
-  await getDatabase().campaignCreativeApproval.create({
-    data: {
-      organizationId: tenant.organizationId,
-      campaignCreativeId: creative.id,
-      approvedById: user.id,
-      assetChecksum: creative.checksumSha256,
-    },
-  });
+  const approvedAt = new Date();
+  await database.$transaction([
+    database.campaignCreativeApproval.updateMany({
+      where: {
+        organizationId: tenant.organizationId,
+        campaignCreativeId: creative.id,
+        supersededAt: null,
+      },
+      data: { supersededAt: approvedAt },
+    }),
+    database.campaignCreativeApproval.create({
+      data: {
+        organizationId: tenant.organizationId,
+        campaignCreativeId: creative.id,
+        approvedById: user.id,
+        assetChecksum: creative.checksumSha256,
+        approvedAt,
+      },
+    }),
+  ]);
   await recordMetaAuditEvent({
     organizationId: tenant.organizationId,
     actorUserId: user.id,
@@ -260,6 +276,48 @@ export async function approveManualCampaignCreativeAction(
     entityId: creative.id,
   });
   revalidateMeta(organizationSlug, campaignId);
+  revalidatePath(`/dashboard/${organizationSlug}/campaigns/${campaignId}`);
+}
+
+export async function revokeManualCampaignCreativeApprovalAction(
+  organizationSlug: string,
+  campaignId: string,
+  campaignCreativeId: string,
+) {
+  const tenant = await requireTenantContext(organizationSlug, managers);
+  const user = await ensureCurrentUser();
+  const database = getDatabase();
+  const creative = await database.campaignCreative.findFirst({
+    where: {
+      id: campaignCreativeId,
+      campaignId,
+      organizationId: tenant.organizationId,
+      source: "MANUAL_UPLOAD",
+      campaign: { status: { not: "ARCHIVED" } },
+    },
+    select: { id: true },
+  });
+  if (!creative) return;
+
+  const revoked = await database.campaignCreativeApproval.updateMany({
+    where: {
+      organizationId: tenant.organizationId,
+      campaignCreativeId: creative.id,
+      supersededAt: null,
+    },
+    data: { supersededAt: new Date() },
+  });
+  if (!revoked.count) return;
+
+  await recordMetaAuditEvent({
+    organizationId: tenant.organizationId,
+    actorUserId: user.id,
+    action: "CAMPAIGN_CREATIVE_META_APPROVAL_REVOKED",
+    entityType: "CampaignCreative",
+    entityId: creative.id,
+  });
+  revalidateMeta(organizationSlug, campaignId);
+  revalidatePath(`/dashboard/${organizationSlug}/campaigns/${campaignId}`);
 }
 
 export async function saveCampaignMetaConfigurationAction(

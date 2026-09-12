@@ -60,6 +60,12 @@ export async function getCampaignForBuilder(
           creative: { select: { id: true, title: true, type: true, status: true } },
           variant: { select: { id: true, name: true, content: true } },
           creativeAsset: { select: { id: true, altText: true } },
+          metaApprovals: {
+            where: { supersededAt: null },
+            orderBy: { approvedAt: "desc" },
+            take: 1,
+            select: { assetChecksum: true, approvedAt: true },
+          },
         },
       },
       audience: true,
