@@ -22,10 +22,18 @@ function required(name: string) {
   return value;
 }
 
+function hasValidTokenEncryptionKey() {
+  const value = process.env.META_TOKEN_ENCRYPTION_KEY?.trim();
+  return Boolean(value && Buffer.from(value, "base64").byteLength === 32);
+}
+
 export function getMetaConfiguration() {
   const graphApiVersion = required("META_GRAPH_API_VERSION");
   if (!supportedGraphVersions.has(graphApiVersion)) {
     throw new Error("META_GRAPH_API_VERSION is not in Avora's server allowlist.");
+  }
+  if (!hasValidTokenEncryptionKey()) {
+    throw new Error("META_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.");
   }
 
   return {
@@ -54,6 +62,12 @@ export function getMetaAvailability() {
     "META_OAUTH_STATE_SECRET",
   ];
   const missing = requiredNames.filter((name) => !process.env[name]?.trim());
+  if (
+    process.env.META_TOKEN_ENCRYPTION_KEY?.trim() &&
+    !hasValidTokenEncryptionKey()
+  ) {
+    missing.push("META_TOKEN_ENCRYPTION_KEY (invalid format)");
+  }
 
   return {
     configured: missing.length === 0,

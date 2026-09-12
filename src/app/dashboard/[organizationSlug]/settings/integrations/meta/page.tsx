@@ -8,7 +8,14 @@ import { getMetaIntegrationOverview } from "@/features/meta/server/queries";
 import { OrganizationRole } from "@/generated/prisma/enums";
 import { requireTenantContext } from "@/lib/tenancy/tenant-context";
 
-type PageProps = { params: Promise<{ organizationSlug: string }>; searchParams: Promise<{ meta?: string }> };
+type PageProps = {
+  params: Promise<{ organizationSlug: string }>;
+  searchParams: Promise<{
+    meta?: string;
+    reason?: string;
+    reference?: string;
+  }>;
+};
 
 export default async function MetaIntegrationPage({ params, searchParams }: PageProps) {
   const { organizationSlug } = await params;
@@ -25,7 +32,12 @@ export default async function MetaIntegrationPage({ params, searchParams }: Page
         Connect authorized Meta business assets, validate approved campaign plans, and publish new objects in a paused state only.
       </p>
       {query.meta === "connected" ? <Notice tone="success">Meta identity connected. Sync assets before configuring campaigns.</Notice> : null}
-      {query.meta === "connection_failed" ? <Notice tone="danger">Meta connection did not complete. No credentials were stored.</Notice> : null}
+      {query.meta === "connection_failed" ? (
+        <Notice tone="danger">
+          {getConnectionFailureMessage(query.reason)}
+          {query.reference ? ` Reference: ${query.reference}` : ""}
+        </Notice>
+      ) : null}
       {!overview.availability.configured ? (
         <section className="mt-8 rounded-3xl border border-warning/25 bg-warning-muted p-6">
           <p className="font-semibold text-warning">Server configuration required</p>
@@ -80,4 +92,26 @@ export default async function MetaIntegrationPage({ params, searchParams }: Page
 
 function Notice({ tone, children }: { tone: "success" | "danger"; children: React.ReactNode }) {
   return <p className={`mt-6 rounded-2xl border p-4 text-sm ${tone === "success" ? "border-success/20 bg-success-muted text-success" : "border-danger/20 bg-danger-muted text-danger"}`}>{children}</p>;
+}
+
+function getConnectionFailureMessage(reason?: string) {
+  if (reason === "token_encryption_failed") {
+    return "Meta authorization succeeded, but Avora could not encrypt the connection securely.";
+  }
+  if (reason === "connection_not_saved") {
+    return "Meta authorization succeeded, but Avora could not save the connection.";
+  }
+  if (reason === "meta_token_exchange_failed") {
+    return "Meta authorization returned to Avora, but the access credential could not be validated.";
+  }
+  if (reason === "organization_access_changed") {
+    return "Your organization access changed before the Meta connection completed.";
+  }
+  if (reason === "session_unavailable") {
+    return "Your Avora session could not be verified when Meta redirected back.";
+  }
+  if (reason === "provider_authorization_failed") {
+    return "Meta authorization was cancelled or denied.";
+  }
+  return "The Meta connection request was invalid or expired. Please reconnect.";
 }
