@@ -57,7 +57,7 @@ export function DashboardShell({
 
         <div className="mt-auto border-t border-border px-2 pt-5">
           <p className="text-xs leading-5 text-text-muted">
-            Catalogue, Creative Studio, campaign planning, and paused-only Meta publishing are available. Activation and automation remain deferred.
+            Catalogue, Creative Studio, campaigns, and inbound WhatsApp conversations are available. Outbound automation remains deferred.
           </p>
         </div>
       </aside>

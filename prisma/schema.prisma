@@ -248,6 +248,167 @@ enum MetaCallToAction {
   CONTACT_US
 }
 
+enum WhatsAppConnectionStatus {
+  PENDING
+  CONNECTED
+  DEGRADED
+  DISCONNECTED
+  REVOKED
+}
+
+enum WhatsAppWebhookDeliveryStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  PARTIAL
+  FAILED
+  IGNORED
+}
+
+enum WhatsAppWebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  RETRY_PENDING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum WhatsAppWebhookEventType {
+  MESSAGE
+  MESSAGE_STATUS
+  UNKNOWN
+}
+
+enum ContactStatus {
+  ACTIVE
+  BLOCKED
+  ARCHIVED
+}
+
+enum LeadStatus {
+  NEW
+  OPEN
+  QUALIFYING
+  QUALIFIED
+  UNQUALIFIED
+  WON
+  LOST
+  ARCHIVED
+}
+
+enum LeadSource {
+  WHATSAPP
+  META_CAMPAIGN
+  PRODUCT
+  DIRECT
+  UNKNOWN
+}
+
+enum LeadQualificationStage {
+  UNASSESSED
+  DISCOVERY
+  INTERESTED
+  QUALIFIED
+  DISQUALIFIED
+}
+
+enum ConversationStatus {
+  OPEN
+  WAITING_ON_CUSTOMER
+  FOLLOW_UP
+  HANDOFF
+  RESOLVED
+  ARCHIVED
+}
+
+enum ConversationParticipantType {
+  CONTACT
+  ORGANIZATION_MEMBER
+  AI
+  SYSTEM
+}
+
+enum ConversationParticipantRole {
+  CUSTOMER
+  ASSIGNEE
+  OBSERVER
+  AUTOMATION
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum MessageAuthorType {
+  CONTACT
+  HUMAN
+  AI
+  SYSTEM
+}
+
+enum MessageContentType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  INTERACTIVE
+  REACTION
+  UNSUPPORTED
+}
+
+enum MessageCurrentStatus {
+  RECEIVED
+  DRAFT
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  DELETED
+}
+
+enum MessageDeliveryState {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  DELETED
+}
+
+enum ConversationAssignmentStatus {
+  ACTIVE
+  RELEASED
+}
+
+enum FollowUpConsentStatus {
+  UNKNOWN
+  NO_CONSENT
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum FollowUpStatus {
+  NOT_SCHEDULED
+  SCHEDULED
+  DUE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum AuditActorType {
+  USER
+  SYSTEM
+  PROVIDER
+}
+
 model User {
   id          String   @id @default(cuid())
   clerkUserId String   @unique
@@ -271,6 +432,12 @@ model User {
   metaPublishApprovals MetaPublishApproval[]  @relation("MetaPublishApprover")
   metaPublishJobs      MetaPublishJob[]       @relation("MetaPublishInitiator")
   metaAuditEvents      MetaAuditEvent[]       @relation("MetaAuditActor")
+  configuredWhatsAppConnections WhatsAppConnection[] @relation("WhatsAppConnectionConfigurer")
+  updatedLeadQualifications LeadQualification[] @relation("LeadQualificationUpdater")
+  createdConversationAssignments ConversationAssignment[] @relation("ConversationAssignmentCreator")
+  releasedConversationAssignments ConversationAssignment[] @relation("ConversationAssignmentReleaser")
+  updatedFollowUpStates FollowUpState[] @relation("FollowUpStateUpdater")
+  auditEvents          AuditEvent[]           @relation("AuditEventActor")
 
   @@index([email])
 }
@@ -327,6 +494,19 @@ model Organization {
   metaCreativeMappings MetaCreativeMapping[]
   metaAdMappings    MetaAdMapping[]
   metaAuditEvents   MetaAuditEvent[]
+  whatsappConnections WhatsAppConnection[]
+  whatsappWebhookDeliveries WhatsAppWebhookDelivery[]
+  whatsappWebhookEvents WhatsAppWebhookEvent[]
+  contacts          Contact[]
+  leads             Lead[]
+  leadQualifications LeadQualification[]
+  conversations     Conversation[]
+  conversationParticipants ConversationParticipant[]
+  messages          Message[]
+  messageDeliveryStatuses MessageDeliveryStatus[]
+  conversationAssignments ConversationAssignment[]
+  followUpStates    FollowUpState[]
+  auditEvents       AuditEvent[]
 
   @@index([createdById])
 }
@@ -341,6 +521,10 @@ model OrganizationMember {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedConversations Conversation[] @relation("CurrentConversationAssignee")
+  conversationParticipations ConversationParticipant[]
+  authoredMessages Message[] @relation("MessageAuthorMember")
+  conversationAssignments ConversationAssignment[] @relation("ConversationAssignmentMember")
 
   @@unique([organizationId, userId])
   @@index([userId])
@@ -379,6 +563,7 @@ model Product {
   media        ProductMedia[]
   creatives    Creative[]
   campaignProducts CampaignProduct[]
+  attributedLeads Lead[]
 
   @@unique([organizationId, sku])
   @@unique([organizationId, id])
@@ -740,6 +925,7 @@ model Campaign {
   metaPublishApprovals MetaPublishApproval[]
   metaPublishJobs MetaPublishJob[]
   metaCampaignMapping MetaCampaignMapping?
+  attributedLeads Lead[]
 
   @@unique([organizationId, id])
   @@index([organizationId, status, updatedAt])
@@ -796,6 +982,7 @@ model CampaignCreative {
   metaAds       CampaignMetaAd[]
   metaApprovals CampaignCreativeApproval[]
   metaMediaMappings MetaMediaMapping[]
+  attributedLeads Lead[]
 
   @@unique([organizationId, id])
   @@unique([campaignId, creativeId])
@@ -1439,4 +1626,401 @@ model MetaAuditEvent {
   @@unique([organizationId, id])
   @@index([organizationId, createdAt])
   @@index([entityType, entityId])
+}
+
+model WhatsAppConnection {
+  id                 String                      @id @default(cuid())
+  organizationId     String
+  configuredById     String
+  status             WhatsAppConnectionStatus   @default(PENDING)
+  wabaId             String
+  phoneNumberId      String                      @unique
+  displayPhoneNumber String?
+  verifiedName       String?
+  scopes             String[]                    @default([])
+  tokenCiphertext    Bytes?
+  tokenIv            Bytes?
+  tokenAuthTag       Bytes?
+  tokenKeyVersion    String?
+  tokenExpiresAt     DateTime?
+  webhookSubscribedAt DateTime?
+  lastValidatedAt    DateTime?
+  lastWebhookAt      DateTime?
+  lastErrorCode      String?
+  lastErrorMessage   String?
+  disconnectedAt     DateTime?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configuredBy User @relation("WhatsAppConnectionConfigurer", fields: [configuredById], references: [id], onDelete: Restrict)
+  webhookDeliveries WhatsAppWebhookDelivery[]
+  webhookEvents WhatsAppWebhookEvent[]
+  conversations Conversation[]
+  messages Message[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status])
+  @@index([organizationId, wabaId])
+  @@index([configuredById])
+}
+
+model WhatsAppWebhookDelivery {
+  id                 String                           @id @default(cuid())
+  organizationId     String
+  connectionId       String
+  payloadSha256      String
+  rawStorageProvider String
+  rawBucket          String
+  rawStorageKey      String                           @unique
+  rawSizeBytes       BigInt
+  status             WhatsAppWebhookDeliveryStatus   @default(RECEIVED)
+  eventCount         Int                              @default(0)
+  processedEventCount Int                             @default(0)
+  failedEventCount   Int                              @default(0)
+  lastErrorCode      String?
+  lastErrorMessage   String?
+  receivedAt         DateTime                         @default(now())
+  expiresAt          DateTime
+  processedAt        DateTime?
+  rawDeletedAt       DateTime?
+  createdAt          DateTime                         @default(now())
+  updatedAt          DateTime                         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  events WhatsAppWebhookEvent[]
+
+  @@unique([organizationId, id])
+  @@unique([connectionId, payloadSha256])
+  @@index([organizationId, receivedAt])
+  @@index([expiresAt, rawDeletedAt])
+}
+
+model WhatsAppWebhookEvent {
+  id                 String                         @id @default(cuid())
+  organizationId     String
+  connectionId       String
+  deliveryId         String
+  providerEventKey   String
+  eventType          WhatsAppWebhookEventType
+  providerMessageId  String?
+  normalizedPayload  Json?
+  status             WhatsAppWebhookEventStatus    @default(RECEIVED)
+  attemptCount       Int                            @default(0)
+  maxAttempts        Int                            @default(8)
+  availableAt        DateTime                       @default(now())
+  leaseToken         String?
+  leaseExpiresAt     DateTime?
+  processingStartedAt DateTime?
+  processedAt        DateTime?
+  lastErrorCode      String?
+  lastErrorMessage   String?
+  createdAt          DateTime                       @default(now())
+  updatedAt          DateTime                       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  delivery WhatsAppWebhookDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  sourceMessage Message? @relation("InboundMessageEvent")
+  deliveryStatus MessageDeliveryStatus? @relation("MessageDeliveryEvent")
+
+  @@unique([organizationId, id])
+  @@unique([connectionId, providerEventKey])
+  @@index([organizationId, status, availableAt])
+  @@index([status, availableAt, leaseExpiresAt])
+  @@index([providerMessageId])
+}
+
+model Contact {
+  id             String        @id @default(cuid())
+  organizationId String
+  waId           String
+  phoneE164      String?
+  displayName    String?
+  locale         String?
+  status         ContactStatus @default(ACTIVE)
+  firstSeenAt    DateTime      @default(now())
+  lastSeenAt     DateTime      @default(now())
+  archivedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads Lead[]
+  conversations Conversation[]
+  participations ConversationParticipant[]
+  authoredMessages Message[] @relation("MessageAuthorContact")
+  followUpStates FollowUpState[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, waId])
+  @@unique([organizationId, phoneE164])
+  @@index([organizationId, status, lastSeenAt])
+}
+
+model Lead {
+  id                 String      @id @default(cuid())
+  organizationId     String
+  contactId          String
+  status             LeadStatus  @default(NEW)
+  source             LeadSource  @default(WHATSAPP)
+  campaignId         String?
+  campaignCreativeId String?
+  productId          String?
+  providerClickId    String?
+  providerAdId       String?
+  referralSourceUrl  String?
+  firstInboundAt     DateTime?
+  lastActivityAt     DateTime    @default(now())
+  archivedAt         DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignCreative CampaignCreative? @relation(fields: [campaignCreativeId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  qualification LeadQualification?
+  conversations Conversation[]
+  followUpState FollowUpState?
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status, lastActivityAt])
+  @@index([organizationId, contactId, status])
+  @@index([organizationId, campaignId])
+  @@index([organizationId, productId])
+}
+
+model LeadQualification {
+  id             String                    @id @default(cuid())
+  organizationId String
+  leadId         String                    @unique
+  stage          LeadQualificationStage    @default(UNASSESSED)
+  need           String?
+  budget         String?
+  timeline       String?
+  decisionMaker  String?
+  score          Int?
+  notes          String?
+  updatedById    String?
+  qualifiedAt    DateTime?
+  disqualifiedAt DateTime?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  updatedBy User? @relation("LeadQualificationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, stage])
+  @@index([updatedById])
+}
+
+model Conversation {
+  id                                  String             @id @default(cuid())
+  organizationId                      String
+  connectionId                        String
+  contactId                           String
+  leadId                              String?
+  conversationKey                     String
+  status                              ConversationStatus @default(OPEN)
+  currentAssignedOrganizationMemberId String?
+  automationSuppressedAt              DateTime?
+  automationSuppressionReason          String?
+  unreadCount                         Int                @default(0)
+  lastMessageAt                       DateTime?
+  lastInboundAt                       DateTime?
+  lastOutboundAt                      DateTime?
+  handedOffAt                         DateTime?
+  resolvedAt                          DateTime?
+  archivedAt                          DateTime?
+  createdAt                           DateTime            @default(now())
+  updatedAt                           DateTime            @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  currentAssignedOrganizationMember OrganizationMember? @relation("CurrentConversationAssignee", fields: [currentAssignedOrganizationMemberId], references: [id], onDelete: SetNull)
+  participants ConversationParticipant[]
+  messages Message[]
+  assignments ConversationAssignment[]
+  followUpState FollowUpState?
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, connectionId, conversationKey])
+  @@index([organizationId, status, lastMessageAt])
+  @@index([organizationId, currentAssignedOrganizationMemberId, status])
+  @@index([organizationId, contactId])
+}
+
+model ConversationParticipant {
+  id                   String                      @id @default(cuid())
+  organizationId       String
+  conversationId       String
+  participantType      ConversationParticipantType
+  role                  ConversationParticipantRole
+  contactId             String?
+  organizationMemberId String?
+  displayName           String?
+  joinedAt              DateTime                    @default(now())
+  leftAt                DateTime?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  organizationMember OrganizationMember? @relation(fields: [organizationMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, conversationId, role])
+  @@index([contactId])
+  @@index([organizationMemberId])
+}
+
+model Message {
+  id                           String               @id @default(cuid())
+  organizationId               String
+  connectionId                 String
+  conversationId               String
+  sourceWebhookEventId         String?              @unique
+  providerMessageId            String?
+  direction                    MessageDirection
+  authorType                   MessageAuthorType
+  authoredByOrganizationMemberId String?
+  authoredByContactId          String?
+  contentType                  MessageContentType
+  textBody                     String?
+  content                      Json?
+  providerMediaId              String?
+  mediaMimeType                String?
+  mediaFileName                String?
+  mediaSha256                  String?
+  replyToMessageId             String?
+  currentStatus                MessageCurrentStatus
+  providerTimestamp            DateTime?
+  receivedAt                   DateTime?
+  sentAt                       DateTime?
+  lastErrorCode                String?
+  lastErrorMessage             String?
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sourceWebhookEvent WhatsAppWebhookEvent? @relation("InboundMessageEvent", fields: [sourceWebhookEventId], references: [id], onDelete: SetNull)
+  authoredByOrganizationMember OrganizationMember? @relation("MessageAuthorMember", fields: [authoredByOrganizationMemberId], references: [id], onDelete: SetNull)
+  authoredByContact Contact? @relation("MessageAuthorContact", fields: [authoredByContactId], references: [id], onDelete: SetNull)
+  replyTo Message? @relation("MessageReply", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies Message[] @relation("MessageReply")
+  deliveryStatuses MessageDeliveryStatus[]
+
+  @@unique([organizationId, id])
+  @@unique([connectionId, providerMessageId])
+  @@index([organizationId, conversationId, createdAt])
+  @@index([organizationId, currentStatus, updatedAt])
+  @@index([authoredByOrganizationMemberId])
+  @@index([authoredByContactId])
+}
+
+model MessageDeliveryStatus {
+  id                   String               @id @default(cuid())
+  organizationId       String
+  messageId            String
+  sourceWebhookEventId String?              @unique
+  providerEventKey     String
+  status               MessageDeliveryState
+  providerTimestamp    DateTime?
+  errorCode            String?
+  errorTitle           String?
+  errorMessage         String?
+  createdAt            DateTime             @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  sourceWebhookEvent WhatsAppWebhookEvent? @relation("MessageDeliveryEvent", fields: [sourceWebhookEventId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, providerEventKey])
+  @@index([organizationId, messageId, createdAt])
+}
+
+model ConversationAssignment {
+  id                            String                       @id @default(cuid())
+  organizationId                String
+  conversationId                String
+  assignedOrganizationMemberId  String
+  assignedById                  String
+  releasedById                  String?
+  status                        ConversationAssignmentStatus @default(ACTIVE)
+  reason                        String?
+  assignedAt                    DateTime                     @default(now())
+  releasedAt                    DateTime?
+  createdAt                     DateTime                     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignedOrganizationMember OrganizationMember @relation("ConversationAssignmentMember", fields: [assignedOrganizationMemberId], references: [id], onDelete: Restrict)
+  assignedBy User @relation("ConversationAssignmentCreator", fields: [assignedById], references: [id], onDelete: Restrict)
+  releasedBy User? @relation("ConversationAssignmentReleaser", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, conversationId, status])
+  @@index([organizationId, assignedOrganizationMemberId, status])
+}
+
+model FollowUpState {
+  id             String                @id @default(cuid())
+  organizationId String
+  contactId      String
+  leadId         String                @unique
+  conversationId String?               @unique
+  consentStatus  FollowUpConsentStatus @default(UNKNOWN)
+  consentSource  String?
+  consentCapturedAt DateTime?
+  optedOutAt     DateTime?
+  status         FollowUpStatus        @default(NOT_SCHEDULED)
+  nextFollowUpAt DateTime?
+  lastFollowUpAt DateTime?
+  pausedReason   String?
+  updatedById    String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("FollowUpStateUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, consentStatus, status])
+  @@index([organizationId, nextFollowUpAt])
+  @@index([contactId])
+}
+
+model AuditEvent {
+  id             String         @id @default(cuid())
+  organizationId String
+  actorUserId    String?
+  actorType      AuditActorType @default(USER)
+  action         String
+  entityType     String
+  entityId       String?
+  correlationId  String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor User? @relation("AuditEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+  @@index([correlationId])
 }

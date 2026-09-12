@@ -20,7 +20,6 @@ type DashboardNavProps = {
 };
 
 const futureItems = [
-  { label: "WhatsApp", icon: MessageIcon },
   { label: "CRM", icon: UsersIcon },
   { label: "Analytics", icon: ChartIcon },
 ] as const;
@@ -46,6 +45,16 @@ export function DashboardNav({
       label: "Campaigns",
       href: `${dashboardHref}/campaigns`,
       icon: MegaphoneIcon,
+    },
+    {
+      label: "Conversations",
+      href: `${dashboardHref}/conversations`,
+      icon: MessageIcon,
+    },
+    {
+      label: "Leads",
+      href: `${dashboardHref}/leads`,
+      icon: UsersIcon,
     },
     {
       label: "Settings",
