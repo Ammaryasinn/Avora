@@ -5,7 +5,9 @@ import {
   syncMetaAssetsFormAction,
 } from "@/features/meta/server/actions";
 import { getMetaIntegrationOverview } from "@/features/meta/server/queries";
+import { getWhatsAppIntegrationOverview } from "@/features/whatsapp/server/queries";
 import { OrganizationRole } from "@/generated/prisma/enums";
+import { MegaphoneIcon, MessageIcon } from "@/components/ui/icons";
 import { requireTenantContext } from "@/lib/tenancy/tenant-context";
 
 type PageProps = {
@@ -21,8 +23,13 @@ export default async function MetaIntegrationPage({ params, searchParams }: Page
   const { organizationSlug } = await params;
   const query = await searchParams;
   const tenant = await requireTenantContext(organizationSlug);
-  const overview = await getMetaIntegrationOverview(tenant.organizationId);
+  const [overview, whatsappOverview] = await Promise.all([
+    getMetaIntegrationOverview(tenant.organizationId),
+    getWhatsAppIntegrationOverview(tenant.organizationId),
+  ]);
   const canManage = tenant.role === OrganizationRole.OWNER || tenant.role === OrganizationRole.ADMIN;
+  const metaConnected = overview.connections.some((connection) => connection.status === "CONNECTED");
+  const whatsappConnected = whatsappOverview.connections.some((connection) => connection.status === "CONNECTED");
 
   return (
     <div>
@@ -31,6 +38,41 @@ export default async function MetaIntegrationPage({ params, searchParams }: Page
       <p className="page-description">
         Connect authorized Meta business assets, validate approved campaign plans, and publish new objects in a paused state only.
       </p>
+
+      <section className="mt-8">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <p className="eyebrow">Available integrations</p>
+            <h2 className="section-heading mt-3 text-2xl">Connected channels</h2>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <Link
+            aria-current="page"
+            className="premium-panel group rounded-3xl border-primary/25 p-5 transition hover:-translate-y-0.5 hover:border-primary/40 sm:p-6"
+            href={`/dashboard/${organizationSlug}/settings/integrations/meta`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <span className="grid size-11 place-items-center rounded-2xl bg-primary-muted text-primary"><MegaphoneIcon className="size-5" /></span>
+              <span className={`status-pill ${metaConnected ? "status-success" : ""}`}>{metaConnected ? "Connected" : "Not connected"}</span>
+            </div>
+            <h3 className="mt-5 text-lg font-semibold">Meta Ads</h3>
+            <p className="mt-2 text-sm leading-6 text-text-secondary">Business assets and paused-only campaign publishing.</p>
+          </Link>
+          <Link
+            className="premium-panel group rounded-3xl p-5 transition hover:-translate-y-0.5 hover:border-primary/40 sm:p-6"
+            href={`/dashboard/${organizationSlug}/settings/integrations/whatsapp`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <span className="grid size-11 place-items-center rounded-2xl bg-primary-muted text-primary"><MessageIcon className="size-5" /></span>
+              <span className={`status-pill ${whatsappConnected ? "status-success" : ""}`}>{whatsappConnected ? "Connected" : "Not connected"}</span>
+            </div>
+            <h3 className="mt-5 text-lg font-semibold">WhatsApp</h3>
+            <p className="mt-2 text-sm leading-6 text-text-secondary">Secure inbound conversations, leads, and human handoff.</p>
+          </Link>
+        </div>
+      </section>
+
       {query.meta === "connected" ? <Notice tone="success">Meta identity connected. Sync assets before configuring campaigns.</Notice> : null}
       {query.meta === "connection_failed" ? (
         <Notice tone="danger">
