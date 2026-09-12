@@ -1,6 +1,9 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { META_OAUTH_SCOPES } from "@/lib/meta/config";
+import { MetaApiError } from "@/lib/meta/errors";
 import { getMetaAdsGateway } from "@/lib/meta/meta-ads-gateway";
 
 import { getMetaConnectionWithToken } from "./connections";
@@ -9,6 +12,25 @@ import type { MetaPublishSnapshot } from "./publishing-snapshot";
 export type MetaValidationIssue = {
   code: string;
   message: string;
+};
+
+type RemoteValidationStage =
+  | "token_inspection"
+  | "ad_account_access"
+  | "page_access"
+  | "instagram_access"
+  | "dataset_access";
+
+type RemoteValidationDiagnostic = {
+  stage: RemoteValidationStage;
+  endpoint: string;
+  status: "PASSED" | "FAILED";
+  httpStatus: number | null;
+  metaErrorType: string | null;
+  code: string | null;
+  subcode: string | null;
+  traceId: string | null;
+  message: string | null;
 };
 
 const objectiveGoals = {
@@ -128,29 +150,226 @@ export function validateMetaSnapshot(
 
 export async function runRemoteMetaValidation(snapshot: MetaPublishSnapshot) {
   const errors: MetaValidationIssue[] = [];
+  const diagnostics: RemoteValidationDiagnostic[] = [];
+  const correlationId = randomUUID();
+  logRemoteValidation({
+    event: "remote_validation_started",
+    correlationId,
+    organizationId: snapshot.organizationId,
+    campaignId: snapshot.campaign.id,
+  });
   const { accessToken } = await getMetaConnectionWithToken(
     snapshot.organizationId,
     snapshot.connection.id,
   );
   const gateway = getMetaAdsGateway();
-  const inspection = await gateway.inspectToken(accessToken);
+  let inspection;
+  try {
+    inspection = await gateway.inspectToken(accessToken);
+    diagnostics.push(passedDiagnostic("token_inspection", "debug_token"));
+  } catch (error) {
+    if (!(error instanceof MetaApiError)) throw error;
+    diagnostics.push(failedDiagnostic("token_inspection", "debug_token", error));
+    logRemoteValidationFailure(
+      error,
+      "token_inspection",
+      "debug_token",
+      correlationId,
+      snapshot,
+    );
+    errors.push(remoteValidationIssue("token_inspection", error, correlationId));
+    return {
+      errors,
+      checkedAt: new Date().toISOString(),
+      correlationId,
+      diagnostics,
+    };
+  }
   if (!inspection.valid) {
     errors.push({ code: "TOKEN_INVALID", message: "The Meta access credential is no longer valid." });
-    return { errors, checkedAt: new Date().toISOString() };
+    return {
+      errors,
+      checkedAt: new Date().toISOString(),
+      correlationId,
+      diagnostics,
+    };
   }
-  const externalIds = [
-    snapshot.adAccount.externalId,
-    snapshot.page.externalId,
-    snapshot.instagramAccount?.externalId,
-    snapshot.dataset?.externalId,
-  ].filter((value): value is string => Boolean(value));
-  const access = await Promise.all(
-    externalIds.map((externalId) => gateway.checkAssetAccess(accessToken, externalId)),
-  );
-  if (access.some((available) => !available)) {
-    errors.push({ code: "REMOTE_ASSET_INACCESSIBLE", message: "Meta could not confirm access to every selected asset." });
+
+  const checks: Array<{
+    stage: Exclude<RemoteValidationStage, "token_inspection">;
+    endpoint: string;
+    externalId: string;
+  }> = [
+    {
+      stage: "ad_account_access",
+      endpoint: "ad_account",
+      externalId: `act_${snapshot.adAccount.externalId.replace(/^act_/, "")}`,
+    },
+    {
+      stage: "page_access",
+      endpoint: "page",
+      externalId: snapshot.page.externalId,
+    },
+  ];
+  if (snapshot.instagramAccount) {
+    checks.push({
+      stage: "instagram_access",
+      endpoint: "instagram_account",
+      externalId: snapshot.instagramAccount.externalId,
+    });
   }
-  return { errors, checkedAt: new Date().toISOString() };
+  if (snapshot.dataset) {
+    checks.push({
+      stage: "dataset_access",
+      endpoint: "dataset",
+      externalId: snapshot.dataset.externalId,
+    });
+  }
+
+  for (const check of checks) {
+    try {
+      const available = await gateway.checkAssetAccess(accessToken, check.externalId);
+      diagnostics.push(
+        available
+          ? passedDiagnostic(check.stage, check.endpoint)
+          : {
+              ...passedDiagnostic(check.stage, check.endpoint),
+              status: "FAILED",
+              message: "Meta returned an unexpected asset identifier.",
+            },
+      );
+      if (!available) {
+        errors.push({
+          code: `REMOTE_${check.stage.toUpperCase()}_FAILED`,
+          message: `${assetLabel(check.stage)} could not be verified by Meta. Reference: ${correlationId}.`,
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof MetaApiError)) throw error;
+      diagnostics.push(failedDiagnostic(check.stage, check.endpoint, error));
+      logRemoteValidationFailure(
+        error,
+        check.stage,
+        check.endpoint,
+        correlationId,
+        snapshot,
+      );
+      errors.push(remoteValidationIssue(check.stage, error, correlationId));
+    }
+  }
+  logRemoteValidation({
+    event: "remote_validation_completed",
+    correlationId,
+    organizationId: snapshot.organizationId,
+    campaignId: snapshot.campaign.id,
+  });
+  return {
+    errors,
+    checkedAt: new Date().toISOString(),
+    correlationId,
+    diagnostics,
+  };
+}
+
+function passedDiagnostic(
+  stage: RemoteValidationStage,
+  endpoint: string,
+): RemoteValidationDiagnostic {
+  return {
+    stage,
+    endpoint,
+    status: "PASSED",
+    httpStatus: null,
+    metaErrorType: null,
+    code: null,
+    subcode: null,
+    traceId: null,
+    message: null,
+  };
+}
+
+function failedDiagnostic(
+  stage: RemoteValidationStage,
+  endpoint: string,
+  error: MetaApiError,
+): RemoteValidationDiagnostic {
+  return {
+    stage,
+    endpoint,
+    status: "FAILED",
+    httpStatus: error.httpStatus ?? null,
+    metaErrorType: error.metaType ?? null,
+    code: error.code ?? null,
+    subcode: error.subcode ?? null,
+    traceId: error.traceId ?? null,
+    message: error.message,
+  };
+}
+
+function assetLabel(stage: RemoteValidationStage) {
+  if (stage === "ad_account_access") return "The selected ad account";
+  if (stage === "page_access") return "The selected Facebook Page";
+  if (stage === "instagram_access") return "The selected Instagram account";
+  if (stage === "dataset_access") return "The selected Meta dataset";
+  return "The Meta access credential";
+}
+
+function remoteValidationIssue(
+  stage: RemoteValidationStage,
+  error: MetaApiError,
+  correlationId: string,
+): MetaValidationIssue {
+  const code = error.code ? ` code ${error.code}` : "";
+  const subcode = error.subcode ? `/${error.subcode}` : "";
+  return {
+    code: `REMOTE_${stage.toUpperCase()}_FAILED`,
+    message: `${assetLabel(stage)} was rejected by Meta: ${error.message} (${code.trim()}${subcode || ""}). Reference: ${correlationId}.`,
+  };
+}
+
+function logRemoteValidationFailure(
+  error: MetaApiError,
+  stage: RemoteValidationStage,
+  endpoint: string,
+  correlationId: string,
+  snapshot: MetaPublishSnapshot,
+) {
+  logRemoteValidation({
+    event: "remote_validation_failed",
+    correlationId,
+    organizationId: snapshot.organizationId,
+    campaignId: snapshot.campaign.id,
+    stage,
+    endpoint,
+    httpStatus: error.httpStatus,
+    metaErrorType: error.metaType,
+    code: error.code,
+    subcode: error.subcode,
+    traceId: error.traceId,
+    errorMessage: error.message,
+  });
+}
+
+function logRemoteValidation(input: {
+  event: string;
+  correlationId: string;
+  organizationId: string;
+  campaignId: string;
+  stage?: string;
+  endpoint?: string;
+  httpStatus?: number;
+  metaErrorType?: string;
+  code?: string;
+  subcode?: string;
+  traceId?: string;
+  errorMessage?: string;
+}) {
+  const payload = JSON.stringify({ component: "meta_remote_validation", ...input });
+  if (input.event === "remote_validation_failed") {
+    console.error(payload);
+    return;
+  }
+  console.info(payload);
 }
 
 function startOfToday(value: Date) {

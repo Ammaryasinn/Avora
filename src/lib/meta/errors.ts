@@ -1,6 +1,7 @@
 export class MetaApiError extends Error {
   readonly code?: string;
   readonly subcode?: string;
+  readonly metaType?: string;
   readonly traceId?: string;
   readonly httpStatus?: number;
   readonly retryAfterSeconds?: number;
@@ -11,6 +12,7 @@ export class MetaApiError extends Error {
     message: string;
     code?: string;
     subcode?: string;
+    metaType?: string;
     traceId?: string;
     httpStatus?: number;
     retryAfterSeconds?: number;
@@ -21,6 +23,7 @@ export class MetaApiError extends Error {
     this.name = "MetaApiError";
     this.code = input.code;
     this.subcode = input.subcode;
+    this.metaType = input.metaType;
     this.traceId = input.traceId;
     this.httpStatus = input.httpStatus;
     this.retryAfterSeconds = input.retryAfterSeconds;

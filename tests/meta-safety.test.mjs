@@ -23,6 +23,15 @@ test("the final approval action states paused publishing explicitly", async () =
   assert.match(review, />Publish to Meta as Paused</);
 });
 
+test("remote validation addresses ad accounts with Meta's act prefix", async () => {
+  const validation = await read("src/features/meta/server/validation.ts");
+  assert.ok(
+    validation.includes(
+      'externalId: `act_${snapshot.adAccount.externalId.replace(/^act_/, "")}`',
+    ),
+  );
+});
+
 test("development OAuth requests only the approved minimal scopes", async () => {
   const config = await read("src/lib/meta/config.ts");
   const requested = config.slice(

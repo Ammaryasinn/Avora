@@ -16,6 +16,7 @@ import { MetaApiError } from "./errors";
 const graphErrorSchema = z.object({
   error: z.object({
     message: z.string().optional(),
+    type: z.string().optional(),
     code: z.union([z.string(), z.number()]).optional(),
     error_subcode: z.union([z.string(), z.number()]).optional(),
     fbtrace_id: z.string().optional(),
@@ -30,6 +31,14 @@ function ownedBytes(value: Uint8Array): Uint8Array<ArrayBuffer> {
   const copy = new Uint8Array(value.byteLength);
   copy.set(value);
   return copy;
+}
+
+function safeProviderMessage(message?: string) {
+  if (!message) return "Meta rejected the request.";
+  return message
+    .replace(/((?:access_token|client_secret|code)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\b\d{8,}\b/g, "[asset-id]")
+    .slice(0, 500);
 }
 
 class GraphMetaAdsGateway implements MetaAdsGateway {
@@ -71,11 +80,14 @@ class GraphMetaAdsGateway implements MetaAdsGateway {
         ? Number.parseInt(retryAfterHeader, 10) || undefined
         : undefined;
       throw new MetaApiError({
-        message: "Meta rejected the request.",
+        message: safeProviderMessage(
+          parsed.success ? parsed.data.error.message : undefined,
+        ),
         code,
         subcode: parsed.success
           ? String(parsed.data.error.error_subcode ?? "") || undefined
           : undefined,
+        metaType: parsed.success ? parsed.data.error.type : undefined,
         traceId: parsed.success ? parsed.data.error.fbtrace_id : undefined,
         httpStatus: response.status,
         retryAfterSeconds,

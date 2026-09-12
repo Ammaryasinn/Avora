@@ -610,12 +610,29 @@ export async function validateMetaCampaignAction(
     try {
       const remote = await runRemoteMetaValidation(built.snapshot);
       remoteErrors = remote.errors;
-      providerMetadata = { checkedAt: remote.checkedAt };
-    } catch {
+      providerMetadata = {
+        checkedAt: remote.checkedAt,
+        correlationId: remote.correlationId,
+        diagnostics: remote.diagnostics,
+      };
+    } catch (error) {
+      const correlationId = randomUUID();
+      console.error(JSON.stringify({
+        component: "meta_remote_validation",
+        event: "remote_validation_internal_failure",
+        correlationId,
+        organizationId: tenant.organizationId,
+        campaignId,
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      }));
       remoteErrors = [{
         code: "REMOTE_VALIDATION_UNAVAILABLE",
-        message: "Meta could not complete remote validation. No publishing action was taken.",
+        message: `Meta could not complete remote validation. No publishing action was taken. Reference: ${correlationId}.`,
       }];
+      providerMetadata = {
+        correlationId,
+        stage: "remote_validation_internal",
+      };
     }
   }
   const errors = [...local.errors, ...remoteErrors];
