@@ -74,7 +74,9 @@ function safeError(value: string | null | undefined) {
   return value.replace(/[\r\n\t]+/g, " ").slice(0, 240);
 }
 
-async function claimNextEvent(workerId: string) {
+type EventScope = { deliveryId: string; organizationId: string } | undefined;
+
+async function claimNextEvent(workerId: string, scope?: EventScope) {
   const database = getDatabase();
   const { leaseSeconds } = getWhatsAppWebhookConfiguration();
 
@@ -94,7 +96,7 @@ async function claimNextEvent(workerId: string) {
       ],
     } satisfies Prisma.WhatsAppWebhookEventWhereInput;
     const candidate = await transaction.whatsAppWebhookEvent.findFirst({
-      where: claimable,
+      where: { ...claimable, ...scope },
       orderBy: [{ availableAt: "asc" }, { createdAt: "asc" }],
       select: { id: true, organizationId: true },
     });
@@ -102,7 +104,7 @@ async function claimNextEvent(workerId: string) {
 
     const leaseToken = `${workerId}:${randomUUID()}`;
     const claimed = await transaction.whatsAppWebhookEvent.updateMany({
-      where: { id: candidate.id, organizationId: candidate.organizationId, ...claimable },
+      where: { id: candidate.id, organizationId: candidate.organizationId, ...claimable, ...scope },
       data: {
         status: WhatsAppWebhookEventStatus.PROCESSING,
         attemptCount: { increment: 1 },
@@ -234,13 +236,16 @@ async function processMessageEvent(
       },
       update: {
         leadId: lead.id,
-        status: "OPEN",
         lastMessageAt: providerTimestamp,
         lastInboundAt: providerTimestamp,
-        resolvedAt: null,
-        archivedAt: null,
       },
     });
+    if (conversation.status === "RESOLVED" || conversation.status === "ARCHIVED") {
+      await transaction.conversation.update({
+        where: { id: conversation.id },
+        data: { status: "OPEN", resolvedAt: null, archivedAt: null },
+      });
+    }
     await transaction.followUpState.upsert({
       where: { leadId: lead.id },
       create: {
@@ -481,9 +486,9 @@ export async function cleanupExpiredWhatsAppWebhookPayloads(limit = 10) {
   return deleted;
 }
 
-export async function processNextWhatsAppWebhookEvent(workerId = randomUUID()) {
-  await cleanupExpiredWhatsAppWebhookPayloads();
-  const claimed = await claimNextEvent(workerId);
+async function processWhatsAppWebhookEvent(workerId: string, scope?: EventScope) {
+  if (!scope) await cleanupExpiredWhatsAppWebhookPayloads();
+  const claimed = await claimNextEvent(workerId, scope);
   if (!claimed) return { processed: false, outcome: "idle" as const };
 
   const event = await getDatabase().whatsAppWebhookEvent.findFirst({
@@ -516,4 +521,22 @@ export async function processNextWhatsAppWebhookEvent(workerId = randomUUID()) {
     if (deliveryId) await refreshDelivery(deliveryId, claimed.organizationId);
     return { processed: true, outcome: "retry_scheduled" as const };
   }
+}
+
+export function processNextWhatsAppWebhookEvent(workerId = randomUUID()) {
+  return processWhatsAppWebhookEvent(workerId);
+}
+
+export async function processWhatsAppWebhookDelivery(
+  deliveryId: string,
+  organizationId: string,
+  maximumEvents = 20,
+) {
+  let processed = 0;
+  while (processed < Math.min(50, Math.max(1, maximumEvents))) {
+    const result = await processWhatsAppWebhookEvent(randomUUID(), { deliveryId, organizationId });
+    if (!result.processed) return { processed, outcome: result.outcome };
+    processed += 1;
+  }
+  return { processed, outcome: "limit_reached" as const };
 }

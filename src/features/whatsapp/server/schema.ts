@@ -9,6 +9,8 @@ import {
 const optionalText = (maximum: number) => z.string().trim().max(maximum).transform((value) => value || undefined);
 
 export const whatsappConnectionSchema = z.object({
+  connectionId: z.string().uuid().optional(),
+  intent: z.enum(["test", "connect"]).default("connect"),
   wabaId: z.string().trim().regex(/^\d+$/, "Enter a valid WhatsApp Business Account ID."),
   phoneNumberId: z.string().trim().regex(/^\d+$/, "Enter a valid phone number ID."),
   accessToken: z.string().trim().min(20, "Enter a valid access token."),

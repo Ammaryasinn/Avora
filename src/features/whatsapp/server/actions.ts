@@ -57,12 +57,27 @@ export async function saveWhatsAppConnectionAction(
   if (!parsed.success) return invalid("Review the WhatsApp connection details.", parsed.error);
   const user = await ensureCurrentUser();
   const database = getDatabase();
-  const existing = await database.whatsAppConnection.findUnique({
+  let existing = parsed.data.connectionId
+    ? await database.whatsAppConnection.findFirst({
+        where: { id: parsed.data.connectionId, organizationId: tenant.organizationId },
+        select: { id: true, organizationId: true },
+      })
+    : null;
+  if (parsed.data.connectionId && !existing) {
+    return invalid("That WhatsApp connection is unavailable.");
+  }
+  const phoneOwner = await database.whatsAppConnection.findUnique({
     where: { phoneNumberId: parsed.data.phoneNumberId },
     select: { id: true, organizationId: true },
   });
-  if (existing && existing.organizationId !== tenant.organizationId) {
+  if (phoneOwner && phoneOwner.id !== existing?.id && phoneOwner.organizationId !== tenant.organizationId) {
     return invalid("That WhatsApp phone number is already connected to another Avora organization.");
+  }
+  if (phoneOwner && phoneOwner.id !== existing?.id) {
+    if (existing) {
+      return invalid("That phone number belongs to another connection in this organization.");
+    }
+    existing = phoneOwner;
   }
 
   const connectionId = existing?.id ?? randomUUID();
@@ -72,15 +87,47 @@ export async function saveWhatsAppConnectionAction(
     if (phone.id !== parsed.data.phoneNumberId) {
       return invalid("Meta returned a different WhatsApp phone number identity.");
     }
+    await gateway.verifyPhoneNumberOwnership(
+      parsed.data.wabaId,
+      parsed.data.phoneNumberId,
+      parsed.data.accessToken,
+    );
+    if (parsed.data.intent === "test") {
+      return {
+        status: "idle",
+        message: `Connection test passed for ${phone.verifiedName ?? phone.displayPhoneNumber ?? "the supplied phone number"}. Nothing was saved or sent.`,
+      };
+    }
     await gateway.subscribeWaba(parsed.data.wabaId, parsed.data.accessToken);
     const encrypted = encryptWhatsAppToken(
       parsed.data.accessToken,
       tenant.organizationId,
       connectionId,
     );
-    const connection = await database.whatsAppConnection.upsert({
-      where: { phoneNumberId: parsed.data.phoneNumberId },
-      create: {
+    const connection = existing
+      ? await database.whatsAppConnection.update({
+          where: { id: existing.id },
+          data: {
+            configuredById: user.id,
+            status: "CONNECTED",
+            wabaId: parsed.data.wabaId,
+            phoneNumberId: parsed.data.phoneNumberId,
+            displayPhoneNumber: phone.displayPhoneNumber,
+            verifiedName: phone.verifiedName,
+            tokenCiphertext: encrypted.ciphertext,
+            tokenIv: encrypted.iv,
+            tokenAuthTag: encrypted.authTag,
+            tokenKeyVersion: encrypted.keyVersion,
+            webhookSubscribedAt: new Date(),
+            lastValidatedAt: new Date(),
+            disconnectedAt: null,
+            lastErrorCode: null,
+            lastErrorMessage: null,
+          },
+          select: { id: true },
+        })
+      : await database.whatsAppConnection.create({
+          data: {
         id: connectionId,
         organizationId: tenant.organizationId,
         configuredById: user.id,
@@ -95,25 +142,9 @@ export async function saveWhatsAppConnectionAction(
         tokenKeyVersion: encrypted.keyVersion,
         webhookSubscribedAt: new Date(),
         lastValidatedAt: new Date(),
-      },
-      update: {
-        configuredById: user.id,
-        status: "CONNECTED",
-        wabaId: parsed.data.wabaId,
-        displayPhoneNumber: phone.displayPhoneNumber,
-        verifiedName: phone.verifiedName,
-        tokenCiphertext: encrypted.ciphertext,
-        tokenIv: encrypted.iv,
-        tokenAuthTag: encrypted.authTag,
-        tokenKeyVersion: encrypted.keyVersion,
-        webhookSubscribedAt: new Date(),
-        lastValidatedAt: new Date(),
-        disconnectedAt: null,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-      },
-      select: { id: true },
-    });
+          },
+          select: { id: true },
+        });
     await recordAuditEvent({
       organizationId: tenant.organizationId,
       actorUserId: user.id,

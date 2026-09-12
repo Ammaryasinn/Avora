@@ -51,6 +51,11 @@ export interface WhatsAppCloudApiGateway {
     displayPhoneNumber: string | null;
     verifiedName: string | null;
   }>;
+  verifyPhoneNumberOwnership(
+    wabaId: string,
+    phoneNumberId: string,
+    accessToken: string,
+  ): Promise<void>;
   subscribeWaba(wabaId: string, accessToken: string): Promise<void>;
 }
 
@@ -66,6 +71,23 @@ class MetaWhatsAppCloudApiGateway implements WhatsAppCloudApiGateway {
       displayPhoneNumber: value.display_phone_number ?? null,
       verifiedName: value.verified_name ?? null,
     };
+  }
+
+  async verifyPhoneNumberOwnership(
+    wabaId: string,
+    phoneNumberId: string,
+    accessToken: string,
+  ) {
+    const value = await graphRequest<{ data?: { id: string }[] }>(
+      `${encodeURIComponent(wabaId)}/phone_numbers?fields=id&limit=100`,
+      accessToken,
+    );
+    if (!value.data?.some((phone) => phone.id === phoneNumberId)) {
+      throw new WhatsAppCloudApiError(
+        "The supplied phone number does not belong to the supplied WhatsApp Business Account.",
+        400,
+      );
+    }
   }
 
   async subscribeWaba(wabaId: string, accessToken: string) {

@@ -11,6 +11,22 @@ export function verifyWhatsAppChallengeToken(suppliedToken, configuredToken) {
   return equalText(suppliedToken, configuredToken);
 }
 
+export function resolveWhatsAppWebhookChallenge(
+  mode,
+  suppliedToken,
+  challenge,
+  configuredToken,
+) {
+  if (
+    mode !== "subscribe" ||
+    !challenge ||
+    !verifyWhatsAppChallengeToken(suppliedToken, configuredToken)
+  ) {
+    return null;
+  }
+  return challenge;
+}
+
 export function verifyWhatsAppSignature(body, signatureHeader, appSecret) {
   if (!signatureHeader || !appSecret || !signatureHeader.startsWith("sha256=")) {
     return false;

@@ -130,7 +130,11 @@ export async function ingestWhatsAppWebhook(body: Uint8Array) {
     if (result > 0) {
       await getWhatsAppWebhookDispatcher().enqueue(deliveryId, connection.organizationId);
     }
-    return { outcome: result > 0 ? "accepted" as const : "duplicate" as const, deliveryId };
+    return {
+      outcome: result > 0 ? "accepted" as const : "duplicate" as const,
+      deliveryId,
+      organizationId: connection.organizationId,
+    };
   } catch (error) {
     await blobStore.deleteObject(rawStorageKey).catch(() => undefined);
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -138,7 +142,11 @@ export async function ingestWhatsAppWebhook(body: Uint8Array) {
         where: { connectionId_payloadSha256: { connectionId: connection.id, payloadSha256 } },
         select: { id: true },
       });
-      return { outcome: "duplicate" as const, deliveryId: existing?.id };
+      return {
+        outcome: "duplicate" as const,
+        deliveryId: existing?.id,
+        organizationId: connection.organizationId,
+      };
     }
     throw error;
   }

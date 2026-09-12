@@ -19,6 +19,24 @@ function hasValidEncryptionKey() {
   return Boolean(value && Buffer.from(value, "base64").byteLength === 32);
 }
 
+function outboundIsExplicitlyDisabled() {
+  return process.env.WHATSAPP_OUTBOUND_ENABLED?.trim().toLowerCase() === "false";
+}
+
+function callbackUrl() {
+  const appUrl = process.env.APP_URL?.trim();
+  if (!appUrl) return null;
+  try {
+    const url = new URL(appUrl);
+    if (!url.hostname || (process.env.NODE_ENV === "production" && url.protocol !== "https:")) {
+      return null;
+    }
+    return new URL("/api/webhooks/whatsapp", url.origin).toString();
+  } catch {
+    return null;
+  }
+}
+
 export function getWhatsAppConfiguration() {
   const webhook = getWhatsAppWebhookConfiguration();
   const graphApiVersion = webhook.graphApiVersion;
@@ -28,8 +46,8 @@ export function getWhatsAppConfiguration() {
   if (!hasValidEncryptionKey()) {
     throw new Error("WHATSAPP_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.");
   }
-  if (process.env.WHATSAPP_OUTBOUND_ENABLED === "true") {
-    throw new Error("Outbound WhatsApp delivery is unavailable in Milestone 3A.");
+  if (!outboundIsExplicitlyDisabled()) {
+    throw new Error("WHATSAPP_OUTBOUND_ENABLED must be explicitly set to false.");
   }
 
   return {
@@ -64,6 +82,7 @@ export function getWhatsAppWebhookConfiguration() {
 
 export function getWhatsAppAvailability() {
   const requiredNames = [
+    "APP_URL",
     "WHATSAPP_META_APP_ID",
     "WHATSAPP_META_APP_SECRET",
     "WHATSAPP_GRAPH_API_VERSION",
@@ -71,6 +90,8 @@ export function getWhatsAppAvailability() {
     "WHATSAPP_TOKEN_ENCRYPTION_KEY",
     "WHATSAPP_TOKEN_ENCRYPTION_KEY_VERSION",
     "WHATSAPP_WEBHOOK_WORKER_SECRET",
+    "WHATSAPP_INBOUND_ENABLED",
+    "WHATSAPP_OUTBOUND_ENABLED",
   ];
   const missing = requiredNames.filter((name) => !process.env[name]?.trim());
   if (
@@ -79,8 +100,14 @@ export function getWhatsAppAvailability() {
   ) {
     missing.push("WHATSAPP_TOKEN_ENCRYPTION_KEY (invalid format)");
   }
-  if (process.env.WHATSAPP_OUTBOUND_ENABLED === "true") {
-    missing.push("WHATSAPP_OUTBOUND_ENABLED must remain false");
+  if (!callbackUrl() && process.env.APP_URL?.trim()) {
+    missing.push("APP_URL (invalid callback origin)");
+  }
+  if (process.env.WHATSAPP_INBOUND_ENABLED?.trim().toLowerCase() !== "true") {
+    missing.push("WHATSAPP_INBOUND_ENABLED must be true");
+  }
+  if (!outboundIsExplicitlyDisabled()) {
+    missing.push("WHATSAPP_OUTBOUND_ENABLED must be false");
   }
 
   return {
@@ -91,8 +118,12 @@ export function getWhatsAppAvailability() {
   };
 }
 
+export function getWhatsAppCallbackUrl() {
+  return callbackUrl();
+}
+
 export function assertWhatsAppOutboundDisabled() {
-  if (process.env.WHATSAPP_OUTBOUND_ENABLED === "true") {
-    throw new Error("Outbound WhatsApp delivery is unavailable in Milestone 3A.");
+  if (!outboundIsExplicitlyDisabled()) {
+    throw new Error("Outbound WhatsApp delivery is disabled and must remain explicitly false.");
   }
 }

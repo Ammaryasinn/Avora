@@ -15,6 +15,7 @@
     "db:studio": "prisma studio",
     "ai:worker": "node --env-file=.env scripts/ai-worker.mjs",
     "meta:worker": "node --env-file=.env scripts/meta-publish-worker.mjs",
+    "whatsapp:worker": "node --env-file=.env scripts/whatsapp-worker.mjs",
     "postinstall": "prisma generate"
   },
   "engines": {

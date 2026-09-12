@@ -36,7 +36,7 @@ export function getConversations(organizationId: string) {
       lastMessageAt: true,
       automationSuppressedAt: true,
       contact: { select: { displayName: true, phoneE164: true, waId: true } },
-      lead: { select: { id: true, status: true } },
+      lead: { select: { id: true, status: true, source: true } },
       currentAssignedOrganizationMember: {
         select: { id: true, user: { select: { firstName: true, lastName: true, email: true } } },
       },
@@ -65,6 +65,8 @@ export function getConversationDetail(organizationId: string, conversationId: st
           id: true,
           status: true,
           source: true,
+          firstInboundAt: true,
+          lastActivityAt: true,
           campaign: { select: { id: true, name: true } },
           product: { select: { id: true, name: true } },
           qualification: true,
@@ -132,9 +134,24 @@ export function getLeads(organizationId: string) {
       lastActivityAt: true,
       contact: { select: { displayName: true, phoneE164: true, waId: true } },
       campaign: { select: { name: true } },
+      campaignCreative: {
+        select: { label: true, creative: { select: { title: true } } },
+      },
       product: { select: { name: true } },
       qualification: { select: { stage: true, score: true } },
       followUpState: { select: { consentStatus: true, status: true, nextFollowUpAt: true } },
+      conversations: {
+        where: { archivedAt: null },
+        orderBy: { lastMessageAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          currentAssignedOrganizationMember: {
+            select: { user: { select: { firstName: true, lastName: true, email: true } } },
+          },
+        },
+      },
       _count: { select: { conversations: true } },
     },
   });
@@ -152,13 +169,24 @@ export function getLeadDetail(organizationId: string, leadId: string) {
       providerClickId: true,
       contact: { select: { displayName: true, phoneE164: true, waId: true } },
       campaign: { select: { id: true, name: true } },
+      campaignCreative: {
+        select: { id: true, label: true, creative: { select: { title: true } } },
+      },
       product: { select: { id: true, name: true } },
       qualification: true,
       followUpState: true,
       conversations: {
         where: { archivedAt: null },
         orderBy: { lastMessageAt: "desc" },
-        select: { id: true, status: true, lastMessageAt: true, unreadCount: true },
+        select: {
+          id: true,
+          status: true,
+          lastMessageAt: true,
+          unreadCount: true,
+          currentAssignedOrganizationMember: {
+            select: { user: { select: { firstName: true, lastName: true, email: true } } },
+          },
+        },
       },
     },
   });

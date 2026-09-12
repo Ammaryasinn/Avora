@@ -31,28 +31,35 @@ function FieldError({ state, name }: { state: ActionState; name: string }) {
   return message ? <span className="mt-1 block text-xs text-danger">{message}</span> : null;
 }
 
-export function WhatsAppConnectionForm({ organizationSlug }: { organizationSlug: string }) {
+export function WhatsAppConnectionForm({
+  organizationSlug,
+  connection,
+}: {
+  organizationSlug: string;
+  connection?: { id: string; wabaId: string; phoneNumberId: string };
+}) {
   const [state, action, pending] = useActionState(
     saveWhatsAppConnectionAction.bind(null, organizationSlug),
     initialActionState,
   );
   return (
     <form action={action} className="premium-panel space-y-5 rounded-3xl p-6 sm:p-8">
+      {connection ? <input name="connectionId" type="hidden" value={connection.id} /> : null}
       <div>
         <p className="eyebrow">Secure setup</p>
-        <h2 className="section-heading mt-3 text-2xl">Connect a business number</h2>
+        <h2 className="section-heading mt-3 text-2xl">{connection ? "Replace connection credentials" : "Connect a business number"}</h2>
         <p className="mt-2 text-sm leading-6 text-text-secondary">
-          Avora verifies the number with Meta, subscribes its WABA to webhooks, and encrypts the token before storage.
+          Test performs read-only Meta lookups for the WABA and phone number. Connect subscribes the WABA and encrypts the replacement token before storage.
         </p>
       </div>
       <label className="block">
         <span className="field-label">WhatsApp Business Account ID</span>
-        <input className="form-control" name="wabaId" inputMode="numeric" required />
+        <input className="form-control" name="wabaId" inputMode="numeric" defaultValue={connection?.wabaId} required />
         <FieldError state={state} name="wabaId" />
       </label>
       <label className="block">
         <span className="field-label">Phone number ID</span>
-        <input className="form-control" name="phoneNumberId" inputMode="numeric" required />
+        <input className="form-control" name="phoneNumberId" inputMode="numeric" defaultValue={connection?.phoneNumberId} required />
         <FieldError state={state} name="phoneNumberId" />
       </label>
       <label className="block">
@@ -62,7 +69,10 @@ export function WhatsAppConnectionForm({ organizationSlug }: { organizationSlug:
         <FieldError state={state} name="accessToken" />
       </label>
       <ActionMessage state={state} />
-      <button className="button-primary" disabled={pending}>{pending ? "Verifying…" : "Verify and connect"}</button>
+      <div className="flex flex-wrap gap-3">
+        <button className="button-secondary" disabled={pending} name="intent" type="submit" value="test">{pending ? "Checking…" : "Test connection"}</button>
+        <button className="button-primary" disabled={pending} name="intent" type="submit" value="connect">{pending ? "Verifying…" : connection ? "Reconnect and replace token" : "Verify and connect"}</button>
+      </div>
     </form>
   );
 }
@@ -186,7 +196,7 @@ export function ManualDraftForm({ organizationSlug, conversationId }: { organiza
         <span className="field-label">Human reply draft</span>
         <textarea className="form-control min-h-28" name="body" placeholder="Write a response for review" />
       </label>
-      <p className="mt-2 text-xs leading-5 text-text-muted">Draft only. Avora will not call Meta or send this message.</p>
+      <p className="mt-2 text-xs font-medium leading-5 text-warning">Draft only — outbound WhatsApp sending is disabled.</p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button className="button-primary" disabled={pending}>{pending ? "Saving…" : "Save draft"}</button>
         <ActionMessage state={state} />

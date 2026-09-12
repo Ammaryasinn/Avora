@@ -1,36 +1,27 @@
+import { after } from "next/server";
+
 import { getWhatsAppWebhookConfiguration } from "@/lib/whatsapp/config";
-import {
-  verifyWhatsAppChallengeToken,
-  verifyWhatsAppSignature,
-} from "@/lib/whatsapp/signature.mjs";
+import { verifyWhatsAppSignature } from "@/lib/whatsapp/signature.mjs";
+import { createWhatsAppWebhookVerificationResponse } from "@/lib/whatsapp/webhook-verification.mjs";
 import {
   ingestWhatsAppWebhook,
   WhatsAppWebhookInputError,
 } from "@/features/whatsapp/server/webhook-ingest";
+import { processWhatsAppWebhookDelivery } from "@/features/whatsapp/server/worker";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const mode = url.searchParams.get("hub.mode");
-  const suppliedToken = url.searchParams.get("hub.verify_token");
-  const challenge = url.searchParams.get("hub.challenge");
   const { verifyToken } = getWhatsAppWebhookConfiguration();
-
-  if (
-    mode !== "subscribe" ||
-    !challenge ||
-    !verifyWhatsAppChallengeToken(suppliedToken, verifyToken)
-  ) {
-    return new Response("Forbidden", { status: 403 });
-  }
-  return new Response(challenge, {
-    status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8" },
-  });
+  return createWhatsAppWebhookVerificationResponse(request.url, verifyToken);
 }
 
 export async function POST(request: Request) {
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > 1_048_576) {
+    return Response.json({ error: "Webhook body is too large." }, { status: 413 });
+  }
   const body = new Uint8Array(await request.arrayBuffer());
   const { appSecret } = getWhatsAppWebhookConfiguration();
   if (!verifyWhatsAppSignature(body, request.headers.get("x-hub-signature-256"), appSecret)) {
@@ -39,6 +30,11 @@ export async function POST(request: Request) {
 
   try {
     const result = await ingestWhatsAppWebhook(body);
+    if (result.outcome === "accepted") {
+      after(async () => {
+        await processWhatsAppWebhookDelivery(result.deliveryId, result.organizationId);
+      });
+    }
     return Response.json({ received: true, outcome: result.outcome });
   } catch (error) {
     if (error instanceof WhatsAppWebhookInputError) {

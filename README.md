@@ -1,8 +1,8 @@
 # Avora
 
-Avora is a multi-tenant AI-powered revenue platform. Milestone 2C adds a
-safety-gated Meta Ads connection and PAUSED-only publishing workflow to the
-Clerk, organization, catalogue, Creative Studio, and Campaign Builder foundation.
+Avora is a multi-tenant AI-powered revenue platform. Milestone 3B adds a real,
+signed WhatsApp Cloud API inbound path to the Clerk, organization, catalogue,
+Creative Studio, Campaign Builder, and PAUSED-only Meta Ads foundation.
 
 Implemented now:
 
@@ -21,10 +21,15 @@ Implemented now:
 - Immutable Meta validation snapshots, explicit publish approvals, and audit events
 - Durable, idempotent Meta publish jobs with reconciliation-first failure handling
 - Real Meta campaign, ad set, creative, and ad creation with delivery objects fixed to `PAUSED`
+- Encrypted tenant WhatsApp connections with read-only connection testing
+- Signed, durable, idempotent WhatsApp webhooks and lease-based processing
+- Real inbound contacts, leads, conversations, messages, assignment, and consent state
+- Human reply drafts that cannot call Meta or send externally
 
 Campaign activation, ad spend execution, automatic budget changes, optimization,
-performance analytics, lead ingestion, Instant Forms, Meta catalogues, WhatsApp,
-CRM, attribution, payments, and video generation remain intentionally unavailable.
+performance analytics, Instant Forms, Meta catalogues, outbound WhatsApp,
+AI auto-replies, automated follow-ups, payments, and video generation remain
+intentionally unavailable.
 The UI does not display fabricated revenue, sales, or performance data.
 
 ## Stack
@@ -52,6 +57,7 @@ prisma/
 scripts/
   ai-worker.mjs                Postgres job-runner polling process
   meta-publish-worker.mjs      Postgres Meta publishing worker
+  whatsapp-worker.mjs          Fallback WhatsApp webhook worker
 src/
   app/                         App Router pages and route handlers
   components/                  Shared shell and UI primitives
@@ -60,6 +66,7 @@ src/
     creative-studio/           Briefs, jobs, variants, editor, library
     campaigns/                 Draft planning, audience, budget, assets
     meta/                      OAuth, asset sync, validation, publish jobs
+    whatsapp/                  Connections, inbound processing, conversations, leads
     onboarding/                First organization/business setup
     organizations/             Organization queries
   lib/
@@ -68,6 +75,7 @@ src/
     db/                        Prisma lifecycle
     storage/                   BlobStore contract and private R2 adapter
     meta/                      Graph adapter, encryption, contracts, controls
+    whatsapp/                  Cloud API adapter, signatures, encryption, contracts
     tenancy/                   Membership authorization
   generated/prisma/            Generated Prisma Client
 ```
@@ -223,6 +231,61 @@ requirements are configured.
 also enable publishing for the organization, validate the immutable snapshot,
 and click **Publish to Meta as Paused**. Avora does not expose an activation path.
 
+### WhatsApp inbound
+
+```env
+APP_URL=https://avora-livid.vercel.app
+WHATSAPP_META_APP_ID=
+WHATSAPP_META_APP_SECRET=
+WHATSAPP_GRAPH_API_VERSION=v26.0
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=
+WHATSAPP_TOKEN_ENCRYPTION_KEY=
+WHATSAPP_TOKEN_ENCRYPTION_KEY_VERSION=v1
+WHATSAPP_TOKEN_ENCRYPTION_PREVIOUS_KEYS={}
+WHATSAPP_WEBHOOK_WORKER_SECRET=
+WHATSAPP_RAW_EVENT_RETENTION_DAYS=7
+WHATSAPP_WEBHOOK_MAX_ATTEMPTS=8
+WHATSAPP_WEBHOOK_LEASE_SECONDS=60
+WHATSAPP_INBOUND_ENABLED=true
+WHATSAPP_OUTBOUND_ENABLED=false
+```
+
+All values above belong in Vercel server environment variables. Never prefix
+them with `NEXT_PUBLIC_`. `WHATSAPP_META_APP_SECRET`, the verification token,
+encryption keys, and worker secret must be independently generated secrets.
+`WHATSAPP_TOKEN_ENCRYPTION_KEY` must be a base64-encoded 32-byte key. Preserve
+old version-to-key mappings in `WHATSAPP_TOKEN_ENCRYPTION_PREVIOUS_KEYS` during
+key rotation.
+
+The WABA ID, phone number ID, display phone metadata, and tenant access token are
+configured by an owner or admin at
+`/dashboard/{organizationSlug}/settings/integrations/whatsapp`. Avora stores the
+access token only as AES-256-GCM ciphertext bound to that organization and
+connection. The token is never returned to the browser after submission.
+
+In Meta for Developers, use a Business app and add the **WhatsApp** product. In
+**WhatsApp > API Setup**, select or create the WABA and business phone number;
+copy the WABA ID and phone number ID. For an initial app-role test, the temporary
+token from API Setup is sufficient. For a durable connection, assign the app and
+WABA to a Meta system user and generate a token with
+`whatsapp_business_management` and `whatsapp_business_messaging`.
+
+In **WhatsApp > Configuration**, configure the webhook callback as
+`https://avora-livid.vercel.app/api/webhooks/whatsapp`, use the exact value of
+`WHATSAPP_WEBHOOK_VERIFY_TOKEN`, and subscribe the
+`whatsapp_business_account` object to the `messages` field. Saving a connection
+in Avora performs read-only WABA and phone lookups, confirms the IDs belong
+together, subscribes the supplied WABA to the app, and then encrypts the token.
+It never sends a message.
+
+To prove the inbound path, send a text from a real WhatsApp account to the Meta
+test or registered business number. The signed callback is acknowledged, its
+known-tenant payload is stored privately in R2, and a post-response worker creates
+the Contact, Lead, Conversation, and inbound Message. Open
+`/dashboard/{organizationSlug}/conversations` and select the new thread. If the
+hosting platform cannot run post-response work, run `npm run whatsapp:worker` as
+the fallback poller.
+
 ## Setup
 
 ```bash
@@ -237,6 +300,7 @@ Migrations in this repository:
 - `20260911092307_milestone_2a_creative_studio`
 - `20260911122955_milestone_2b_campaign_builder`
 - `20260911142248_milestone_2c_meta_ads`
+- `20260912092915_milestone_3a_whatsapp_conversations_leads`
 
 For a new schema change during development, use:
 
@@ -252,6 +316,7 @@ Run the web application and worker in separate terminals:
 npm run dev
 npm run ai:worker
 npm run meta:worker
+npm run whatsapp:worker
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The worker requires the web

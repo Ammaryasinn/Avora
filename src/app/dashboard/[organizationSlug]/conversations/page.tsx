@@ -28,11 +28,13 @@ export default async function ConversationsPage({ params }: PageProps) {
             <Link key={conversation.id} href={`/dashboard/${organizationSlug}/conversations/${conversation.id}`} className="flex flex-col gap-4 border-b border-border p-5 transition last:border-b-0 hover:bg-surface-muted/45 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{personName(conversation.contact)}</p>{conversation.unreadCount ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-white">{conversation.unreadCount}</span> : null}</div>
+                <p className="mt-1 text-xs text-text-muted">{conversation.contact.phoneE164 ?? conversation.contact.waId}</p>
                 <p className="mt-2 truncate text-sm text-text-secondary">{latest?.textBody ?? (latest ? latest.contentType.replaceAll("_", " ").toLowerCase() : "No messages")}</p>
                 <p className="mt-2 text-xs text-text-muted">{conversation.lastMessageAt?.toLocaleString() ?? "Awaiting first message"}</p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 {assigneeName ? <span className="status-pill">Assigned to {assigneeName}</span> : null}
+                {conversation.lead ? <span className="status-pill">Lead {conversation.lead.status.replaceAll("_", " ")}</span> : null}
                 <span className={`status-pill ${conversation.status === "HANDOFF" ? "status-warning" : conversation.status === "OPEN" ? "status-success" : ""}`}>{conversation.status.replaceAll("_", " ")}</span>
               </div>
             </Link>
