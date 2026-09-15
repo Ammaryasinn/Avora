@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { Prisma } from "@/generated/prisma/client";
 import {
   FollowUpConsentStatus,
   LeadQualificationStage,
@@ -13,9 +14,17 @@ import {
 import { ensureCurrentUser } from "@/lib/auth/current-user";
 import { getDatabase } from "@/lib/db/database";
 import type { ActionState } from "@/lib/forms/action-state";
-import { assertWhatsAppOutboundDisabled } from "@/lib/whatsapp/config";
-import { getWhatsAppCloudApiGateway } from "@/lib/whatsapp/cloud-api-gateway";
-import { encryptWhatsAppToken } from "@/lib/whatsapp/token-cipher";
+import { isWhatsAppOutboundEnabled } from "@/lib/whatsapp/config";
+import {
+  getWhatsAppCloudApiGateway,
+  WhatsAppCloudApiAmbiguousError,
+  WhatsAppCloudApiError,
+} from "@/lib/whatsapp/cloud-api-gateway";
+import {
+  evaluateWhatsAppOutboundEligibility,
+  resolveLatestInboundAt,
+} from "@/lib/whatsapp/outbound-policy.mjs";
+import { decryptWhatsAppToken, encryptWhatsAppToken } from "@/lib/whatsapp/token-cipher";
 import { requireTenantContext } from "@/lib/tenancy/tenant-context";
 
 import { recordAuditEvent } from "./audit";
@@ -29,6 +38,8 @@ import {
 } from "./schema";
 
 const managers = [OrganizationRole.OWNER, OrganizationRole.ADMIN] as const;
+
+class OutboundValidationError extends Error {}
 
 function paths(organizationSlug: string, conversationId?: string, leadId?: string) {
   const dashboard = `/dashboard/${organizationSlug}`;
@@ -45,6 +56,57 @@ function invalid(message: string, error?: z.ZodError): ActionState {
     message,
     fieldErrors: error ? z.flattenError(error).fieldErrors : undefined,
   };
+}
+
+function safeProviderError(value: string | undefined) {
+  return value?.replace(/[\r\n\t]+/g, " ").slice(0, 240) || "WhatsApp rejected the message.";
+}
+
+async function latestPersistedInboundAt(
+  transaction: Prisma.TransactionClient,
+  organizationId: string,
+  conversationId: string,
+) {
+  const select = { providerTimestamp: true, receivedAt: true, createdAt: true } as const;
+  const [providerTimestamp, receivedAt, createdAt] = await Promise.all([
+    transaction.message.findFirst({
+      where: {
+        organizationId,
+        conversationId,
+        direction: "INBOUND",
+        providerTimestamp: { not: null },
+      },
+      orderBy: { providerTimestamp: "desc" },
+      select,
+    }),
+    transaction.message.findFirst({
+      where: {
+        organizationId,
+        conversationId,
+        direction: "INBOUND",
+        providerTimestamp: null,
+        receivedAt: { not: null },
+      },
+      orderBy: { receivedAt: "desc" },
+      select,
+    }),
+    transaction.message.findFirst({
+      where: {
+        organizationId,
+        conversationId,
+        direction: "INBOUND",
+        providerTimestamp: null,
+        receivedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
+      select,
+    }),
+  ]);
+  return resolveLatestInboundAt(
+    [providerTimestamp, receivedAt, createdAt].filter(
+      (message): message is NonNullable<typeof message> => message !== null,
+    ),
+  );
 }
 
 export async function saveWhatsAppConnectionAction(
@@ -470,7 +532,6 @@ export async function createManualDraftAction(
   formData: FormData,
 ): Promise<ActionState> {
   const tenant = await requireTenantContext(organizationSlug, managers);
-  assertWhatsAppOutboundDisabled();
   const parsed = parseForm(manualDraftSchema, formData);
   if (!parsed.success) return invalid("Review the reply draft.", parsed.error);
   const user = await ensureCurrentUser();
@@ -509,6 +570,329 @@ export async function createManualDraftAction(
   });
   paths(organizationSlug, conversation.id, conversation.leadId ?? undefined);
   return { status: "idle", message: "Reply saved as a draft. Nothing was sent to WhatsApp." };
+}
+
+export async function sendManualDraftAction(
+  organizationSlug: string,
+  conversationId: string,
+  messageId: string,
+  _previousState: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _previousState;
+  void _formData;
+  const tenant = await requireTenantContext(organizationSlug, managers);
+  if (!isWhatsAppOutboundEnabled()) {
+    return invalid("Outbound WhatsApp sending is disabled.");
+  }
+  const parsedMessageId = z.string().trim().min(1).max(64).safeParse(messageId);
+  if (!parsedMessageId.success) return invalid("The reply draft is unavailable.");
+  const user = await ensureCurrentUser();
+  const database = getDatabase();
+
+  let claimed: {
+    messageId: string;
+    textBody: string;
+    recipientWaId: string;
+    phoneNumberId: string;
+    accessToken: string;
+    leadId: string | null;
+  };
+  try {
+    claimed = await database.$transaction(async (transaction) => {
+      const message = await transaction.message.findFirst({
+        where: {
+          id: parsedMessageId.data,
+          organizationId: tenant.organizationId,
+          conversationId,
+          conversation: {
+            organizationId: tenant.organizationId,
+            contact: { organizationId: tenant.organizationId },
+            connection: { organizationId: tenant.organizationId },
+          },
+        },
+        select: {
+          id: true,
+          direction: true,
+          authorType: true,
+          contentType: true,
+          textBody: true,
+          currentStatus: true,
+          conversation: {
+            select: {
+              id: true,
+              organizationId: true,
+              archivedAt: true,
+              leadId: true,
+              contact: { select: { organizationId: true, waId: true, status: true } },
+              followUpState: { select: { consentStatus: true } },
+              connection: {
+                select: {
+                  id: true,
+                  organizationId: true,
+                  status: true,
+                  phoneNumberId: true,
+                  disconnectedAt: true,
+                  tokenCiphertext: true,
+                  tokenIv: true,
+                  tokenAuthTag: true,
+                  tokenKeyVersion: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (
+        !message ||
+        message.direction !== "OUTBOUND" ||
+        message.authorType !== "HUMAN" ||
+        message.contentType !== "TEXT" ||
+        !message.textBody
+      ) {
+        throw new OutboundValidationError("The reply draft is unavailable.");
+      }
+      if (message.currentStatus !== "DRAFT") {
+        throw new OutboundValidationError("This draft has already been submitted.");
+      }
+
+      const connection = message.conversation.connection;
+      const hasUsableToken = Boolean(
+        connection.tokenCiphertext &&
+        connection.tokenIv &&
+        connection.tokenAuthTag &&
+        connection.tokenKeyVersion,
+      );
+      const latestInboundAt = await latestPersistedInboundAt(
+        transaction,
+        tenant.organizationId,
+        conversationId,
+      );
+      const eligibility = evaluateWhatsAppOutboundEligibility({
+        featureEnabled: isWhatsAppOutboundEnabled(),
+        role: tenant.role,
+        conversationArchived: Boolean(message.conversation.archivedAt),
+        connectionStatus: connection.status,
+        connectionDisconnected: Boolean(connection.disconnectedAt),
+        hasUsableToken,
+        contactStatus: message.conversation.contact.status,
+        consentStatus: message.conversation.followUpState?.consentStatus ?? FollowUpConsentStatus.UNKNOWN,
+        latestInboundAt,
+        now: new Date(),
+      });
+      if (!eligibility.canSend) throw new OutboundValidationError(eligibility.message);
+      if (
+        message.conversation.organizationId !== tenant.organizationId ||
+        message.conversation.contact.organizationId !== tenant.organizationId ||
+        connection.organizationId !== tenant.organizationId
+      ) {
+        throw new OutboundValidationError("The reply draft is unavailable.");
+      }
+
+      const accessToken = decryptWhatsAppToken(
+        {
+          ciphertext: connection.tokenCiphertext!,
+          iv: connection.tokenIv!,
+          authTag: connection.tokenAuthTag!,
+          keyVersion: connection.tokenKeyVersion!,
+        },
+        tenant.organizationId,
+        connection.id,
+      );
+      const claim = await transaction.message.updateMany({
+        where: {
+          id: message.id,
+          organizationId: tenant.organizationId,
+          conversationId,
+          currentStatus: "DRAFT",
+        },
+        data: {
+          currentStatus: "QUEUED",
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      if (claim.count !== 1) {
+        throw new OutboundValidationError("This draft has already been submitted.");
+      }
+      return {
+        messageId: message.id,
+        textBody: message.textBody,
+        recipientWaId: message.conversation.contact.waId,
+        phoneNumberId: connection.phoneNumberId,
+        accessToken,
+        leadId: message.conversation.leadId,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof OutboundValidationError) return invalid(error.message);
+    return invalid("Avora could not safely prepare this WhatsApp message.");
+  }
+
+  if (!isWhatsAppOutboundEnabled()) {
+    await database.message.updateMany({
+      where: {
+        id: claimed.messageId,
+        organizationId: tenant.organizationId,
+        conversationId,
+        currentStatus: "QUEUED",
+        providerMessageId: null,
+      },
+      data: { currentStatus: "DRAFT" },
+    });
+    return invalid("Outbound WhatsApp sending is disabled.");
+  }
+
+  try {
+    const result = await getWhatsAppCloudApiGateway().sendTextMessage(
+      claimed.phoneNumberId,
+      claimed.recipientWaId,
+      claimed.textBody,
+      claimed.accessToken,
+    );
+    const sentAt = new Date();
+    await database.$transaction(async (transaction) => {
+      const finalized = await transaction.message.updateMany({
+        where: {
+          id: claimed.messageId,
+          organizationId: tenant.organizationId,
+          conversationId,
+          currentStatus: "QUEUED",
+          providerMessageId: null,
+        },
+        data: {
+          providerMessageId: result.providerMessageId,
+          currentStatus: "SENT",
+          sentAt,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      if (finalized.count !== 1) throw new Error("The send claim could not be finalized.");
+      await transaction.messageDeliveryStatus.create({
+        data: {
+          organizationId: tenant.organizationId,
+          messageId: claimed.messageId,
+          providerEventKey: `outbound:${claimed.messageId}:sent`,
+          status: "SENT",
+          providerTimestamp: sentAt,
+        },
+      });
+      await transaction.conversation.updateMany({
+        where: { id: conversationId, organizationId: tenant.organizationId, archivedAt: null },
+        data: { lastMessageAt: sentAt, lastOutboundAt: sentAt },
+      });
+      if (claimed.leadId) {
+        await transaction.lead.updateMany({
+          where: { id: claimed.leadId, organizationId: tenant.organizationId },
+          data: { lastActivityAt: sentAt },
+        });
+      }
+      await transaction.auditEvent.create({
+        data: {
+          organizationId: tenant.organizationId,
+          actorUserId: user.id,
+          action: "WHATSAPP_MESSAGE_SENT",
+          entityType: "Message",
+          entityId: claimed.messageId,
+          correlationId: claimed.messageId,
+          metadata: { providerMessageId: result.providerMessageId },
+        },
+      });
+    });
+    paths(organizationSlug, conversationId, claimed.leadId ?? undefined);
+    return { status: "idle", message: "Message sent via WhatsApp." };
+  } catch (error) {
+    if (error instanceof WhatsAppCloudApiError) {
+      const errorMessage = safeProviderError(error.message);
+      try {
+        await database.$transaction([
+          database.message.updateMany({
+            where: {
+              id: claimed.messageId,
+              organizationId: tenant.organizationId,
+              conversationId,
+              currentStatus: "QUEUED",
+              providerMessageId: null,
+            },
+            data: {
+              currentStatus: "FAILED",
+              lastErrorCode: error.code ? String(error.code) : `HTTP_${error.status}`,
+              lastErrorMessage: errorMessage,
+            },
+          }),
+          database.messageDeliveryStatus.upsert({
+            where: {
+              organizationId_providerEventKey: {
+                organizationId: tenant.organizationId,
+                providerEventKey: `outbound:${claimed.messageId}:failed`,
+              },
+            },
+            create: {
+              organizationId: tenant.organizationId,
+              messageId: claimed.messageId,
+              providerEventKey: `outbound:${claimed.messageId}:failed`,
+              status: "FAILED",
+              errorCode: error.code ? String(error.code) : `HTTP_${error.status}`,
+              errorTitle: error.type?.slice(0, 240),
+              errorMessage,
+            },
+            update: {},
+          }),
+          database.auditEvent.create({
+            data: {
+              organizationId: tenant.organizationId,
+              actorUserId: user.id,
+              action: "WHATSAPP_MESSAGE_SEND_FAILED",
+              entityType: "Message",
+              entityId: claimed.messageId,
+              correlationId: claimed.messageId,
+              metadata: { status: error.status, code: error.code ?? null },
+            },
+          }),
+        ]);
+      } catch {
+        return invalid("WhatsApp rejected the message, but Avora could not persist the failure details.");
+      }
+      paths(organizationSlug, conversationId, claimed.leadId ?? undefined);
+      return invalid("WhatsApp rejected the message. Review the failed draft before trying again.");
+    }
+
+    const ambiguous = error instanceof WhatsAppCloudApiAmbiguousError
+      ? error.message
+      : "The WhatsApp send result could not be confirmed.";
+    try {
+      await database.$transaction([
+        database.message.updateMany({
+          where: {
+            id: claimed.messageId,
+            organizationId: tenant.organizationId,
+            conversationId,
+            currentStatus: "QUEUED",
+            providerMessageId: null,
+          },
+          data: {
+            lastErrorCode: "SEND_OUTCOME_UNKNOWN",
+            lastErrorMessage: safeProviderError(ambiguous),
+          },
+        }),
+        database.auditEvent.create({
+          data: {
+            organizationId: tenant.organizationId,
+            actorUserId: user.id,
+            action: "WHATSAPP_MESSAGE_SEND_OUTCOME_UNKNOWN",
+            entityType: "Message",
+            entityId: claimed.messageId,
+            correlationId: claimed.messageId,
+          },
+        }),
+      ]);
+    } catch {
+      return invalid("The WhatsApp send result is unknown. Do not retry this draft.");
+    }
+    paths(organizationSlug, conversationId, claimed.leadId ?? undefined);
+    return invalid("The WhatsApp send result is unknown. Do not retry this draft.");
+  }
 }
 
 export async function markConversationReadAction(

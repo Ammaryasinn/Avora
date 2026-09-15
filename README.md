@@ -24,10 +24,10 @@ Implemented now:
 - Encrypted tenant WhatsApp connections with read-only connection testing
 - Signed, durable, idempotent WhatsApp webhooks and lease-based processing
 - Real inbound contacts, leads, conversations, messages, assignment, and consent state
-- Human reply drafts that cannot call Meta or send externally
+- Controlled human WhatsApp replies with a server kill switch, 24-hour window enforcement, and delivery tracking
 
 Campaign activation, ad spend execution, automatic budget changes, optimization,
-performance analytics, Instant Forms, Meta catalogues, outbound WhatsApp,
+performance analytics, Instant Forms, Meta catalogues, WhatsApp templates,
 AI auto-replies, automated follow-ups, payments, and video generation remain
 intentionally unavailable.
 The UI does not display fabricated revenue, sales, or performance data.
@@ -231,7 +231,7 @@ requirements are configured.
 also enable publishing for the organization, validate the immutable snapshot,
 and click **Publish to Meta as Paused**. Avora does not expose an activation path.
 
-### WhatsApp inbound
+### WhatsApp inbound and controlled outbound
 
 ```env
 APP_URL=https://avora-livid.vercel.app
@@ -285,6 +285,28 @@ the Contact, Lead, Conversation, and inbound Message. Open
 `/dashboard/{organizationSlug}/conversations` and select the new thread. If the
 hosting platform cannot run post-response work, run `npm run whatsapp:worker` as
 the fallback poller.
+
+`WHATSAPP_OUTBOUND_ENABLED` is a hard server-side kill switch. Keep it `false`
+to allow owners and admins to save drafts without making any `/messages` API
+call. Set it to `true` in Vercel and redeploy only when controlled human sending
+is approved. Members remain read-only. Avora permits text sends only from a
+persisted draft, through a connected tenant-owned phone, within the rolling
+24-hour customer service window derived from the latest persisted inbound
+message. `UNKNOWN` and `NO_CONSENT` follow-up states do not block a reply inside
+that user-initiated window; `OPTED_OUT`, blocked contacts, archived
+conversations, inactive connections, and closed windows are hard blocks. Closed
+windows require a template, and template sending is not implemented.
+
+For a production proof, first deploy with `WHATSAPP_OUTBOUND_ENABLED=false`,
+save a draft, and confirm the send button is disabled. Then send a fresh inbound
+message from the test customer, set the Vercel variable to `true`, redeploy, and
+sign in as an owner or admin. Save a text draft and click **Send via WhatsApp**
+once; confirm one outbound message, one provider message ID, and a delivery
+history that advances from `SENT` to `DELIVERED` and `READ` as webhooks arrive.
+Double-click testing must still create only one external message. Confirm a
+member has no draft or send controls, an opted-out or blocked contact cannot
+send, and a conversation whose latest inbound message is older than 24 hours
+shows **Customer service window closed** with no enabled send control.
 
 ## Setup
 

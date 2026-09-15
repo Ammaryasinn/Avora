@@ -13,6 +13,7 @@ import {
   assignConversationAction,
   createManualDraftAction,
   saveWhatsAppConnectionAction,
+  sendManualDraftAction,
   updateFollowUpConsentAction,
   updateLeadQualificationAction,
 } from "../server/actions";
@@ -185,7 +186,23 @@ export function ConsentForm({
   );
 }
 
-export function ManualDraftForm({ organizationSlug, conversationId }: { organizationSlug: string; conversationId: string }) {
+type OutboundComposerState = {
+  canSend: boolean;
+  reason: string | null;
+  windowOpen: boolean;
+  message: string;
+  closesAtLabel: string | null;
+};
+
+export function ManualDraftForm({
+  organizationSlug,
+  conversationId,
+  outboundState,
+}: {
+  organizationSlug: string;
+  conversationId: string;
+  outboundState: OutboundComposerState;
+}) {
   const [state, action, pending] = useActionState(
     createManualDraftAction.bind(null, organizationSlug, conversationId),
     initialActionState,
@@ -196,11 +213,60 @@ export function ManualDraftForm({ organizationSlug, conversationId }: { organiza
         <span className="field-label">Human reply draft</span>
         <textarea className="form-control min-h-28" name="body" placeholder="Write a response for review" />
       </label>
-      <p className="mt-2 text-xs font-medium leading-5 text-warning">Draft only — outbound WhatsApp sending is disabled.</p>
+      <div className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${outboundState.canSend ? "border-success/20 bg-success-muted text-success" : "border-warning/20 bg-warning-muted text-warning"}`}>
+        <p className="font-semibold">
+          {outboundState.canSend
+            ? "Ready to send"
+            : outboundState.reason === "FEATURE_DISABLED"
+              ? "Draft only — outbound disabled"
+              : outboundState.reason === "CONTACT_OPTED_OUT"
+                ? "Contact opted out"
+                : outboundState.reason === "CONNECTION_INACTIVE" || outboundState.reason === "CONNECTION_CREDENTIALS_MISSING"
+                  ? "Connection unavailable"
+                  : outboundState.message}
+        </p>
+        <p className="mt-1">
+          {outboundState.windowOpen && outboundState.closesAtLabel && outboundState.canSend
+            ? `Free-form reply available until ${outboundState.closesAtLabel}. Save first, then send explicitly.`
+            : outboundState.windowOpen && outboundState.closesAtLabel
+              ? `${outboundState.message} Free-form reply window open until ${outboundState.closesAtLabel}.`
+              : `Customer service window closed. ${outboundState.message} You can still save a draft.`}
+        </p>
+      </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button className="button-primary" disabled={pending}>{pending ? "Saving…" : "Save draft"}</button>
         <ActionMessage state={state} />
       </div>
+    </form>
+  );
+}
+
+export function SendDraftForm({
+  organizationSlug,
+  conversationId,
+  messageId,
+  outboundState,
+}: {
+  organizationSlug: string;
+  conversationId: string;
+  messageId: string;
+  outboundState: OutboundComposerState;
+}) {
+  const [state, action, pending] = useActionState(
+    sendManualDraftAction.bind(null, organizationSlug, conversationId, messageId),
+    initialActionState,
+  );
+  return (
+    <form action={action} className="mt-3 border-t border-primary/15 pt-3">
+      <button
+        className="button-primary"
+        disabled={pending || !outboundState.canSend}
+        title={outboundState.canSend ? "Send this saved draft via WhatsApp" : outboundState.message}
+      >
+        {pending ? "Sending…" : "Send via WhatsApp"}
+      </button>
+      <div className="mt-2"><ActionMessage state={state} /></div>
+      {!outboundState.canSend ? <p className="mt-2 text-xs leading-5 text-warning">{outboundState.message}</p> : null}
     </form>
   );
 }

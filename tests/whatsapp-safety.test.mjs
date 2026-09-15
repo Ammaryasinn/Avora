@@ -8,6 +8,11 @@ import {
   verifyWhatsAppSignature,
 } from "../src/lib/whatsapp/signature.mjs";
 import { createWhatsAppWebhookVerificationResponse } from "../src/lib/whatsapp/webhook-verification.mjs";
+import {
+  evaluateWhatsAppOutboundEligibility,
+  getWhatsAppCustomerServiceWindow,
+  resolveLatestInboundAt,
+} from "../src/lib/whatsapp/outbound-policy.mjs";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -118,17 +123,119 @@ test("connection tests are read-only and connection saves encrypt credentials", 
   assert.doesNotMatch(connection.slice(0, connection.indexOf("gateway.subscribeWaba(")), /tokenCiphertext:/);
 });
 
-test("draft replies cannot call Meta and require explicit outbound disablement", async () => {
+test("draft replies remain local regardless of the outbound kill switch", async () => {
   const actions = await read("src/features/whatsapp/server/actions.ts");
-  const config = await read("src/lib/whatsapp/config.ts");
   const start = actions.indexOf("export async function createManualDraftAction(");
-  const end = actions.indexOf("export async function markConversationReadAction(");
+  const end = actions.indexOf("export async function sendManualDraftAction(");
   const draft = actions.slice(start, end);
-  assert.ok(draft.indexOf("assertWhatsAppOutboundDisabled();") < draft.indexOf("database.message.create("));
   assert.match(draft, /direction: "OUTBOUND"/);
   assert.match(draft, /currentStatus: "DRAFT"/);
-  assert.doesNotMatch(draft, /fetch\(|getWhatsAppCloudApiGateway|graphRequest|subscribeWaba/);
-  assert.match(config, /WHATSAPP_OUTBOUND_ENABLED\?\.trim\(\)\.toLowerCase\(\) === "false"/);
+  assert.doesNotMatch(draft, /fetch\(|getWhatsAppCloudApiGateway|sendTextMessage/);
+  assert.doesNotMatch(draft, /isWhatsAppOutboundEnabled/);
+});
+
+const eligibleOutboundInput = {
+  featureEnabled: true,
+  role: "OWNER",
+  conversationArchived: false,
+  connectionStatus: "CONNECTED",
+  connectionDisconnected: false,
+  hasUsableToken: true,
+  contactStatus: "ACTIVE",
+  consentStatus: "UNKNOWN",
+  latestInboundAt: new Date("2026-09-15T09:00:00.000Z"),
+  now: new Date("2026-09-15T10:00:00.000Z"),
+};
+
+test("outbound policy enforces kill switch, manager role, connection, contact, and opt-out", () => {
+  assert.equal(evaluateWhatsAppOutboundEligibility(eligibleOutboundInput).canSend, true);
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, consentStatus: "NO_CONSENT" }).canSend, true);
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, featureEnabled: false }).reason, "FEATURE_DISABLED");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, role: "MEMBER" }).reason, "ROLE_NOT_ALLOWED");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, connectionStatus: "DISCONNECTED" }).reason, "CONNECTION_INACTIVE");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, connectionDisconnected: true }).reason, "CONNECTION_INACTIVE");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, hasUsableToken: false }).reason, "CONNECTION_CREDENTIALS_MISSING");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, contactStatus: "BLOCKED" }).reason, "CONTACT_BLOCKED");
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, consentStatus: "OPTED_OUT" }).reason, "CONTACT_OPTED_OUT");
+});
+
+test("customer service window uses persisted inbound fallback order and closes at 24 hours", () => {
+  const latest = resolveLatestInboundAt([
+    {
+      providerTimestamp: new Date("2026-09-14T09:00:00.000Z"),
+      receivedAt: new Date("2026-09-15T12:00:00.000Z"),
+      createdAt: new Date("2026-09-15T12:00:00.000Z"),
+    },
+    {
+      providerTimestamp: null,
+      receivedAt: new Date("2026-09-15T08:00:00.000Z"),
+      createdAt: new Date("2026-09-15T08:01:00.000Z"),
+    },
+  ]);
+  assert.equal(latest?.toISOString(), "2026-09-15T08:00:00.000Z");
+  assert.equal(getWhatsAppCustomerServiceWindow(latest, new Date("2026-09-16T07:59:59.999Z")).isOpen, true);
+  assert.equal(getWhatsAppCustomerServiceWindow(latest, new Date("2026-09-16T08:00:00.000Z")).isOpen, false);
+  assert.equal(evaluateWhatsAppOutboundEligibility({ ...eligibleOutboundInput, latestInboundAt: null }).reason, "CUSTOMER_SERVICE_WINDOW_CLOSED");
+});
+
+test("send action is tenant-scoped and atomically claims a draft exactly once", async () => {
+  const actions = await read("src/features/whatsapp/server/actions.ts");
+  const start = actions.indexOf("export async function sendManualDraftAction(");
+  const end = actions.indexOf("export async function markConversationReadAction(");
+  const send = actions.slice(start, end);
+  assert.match(send, /requireTenantContext\(organizationSlug, managers\)/);
+  assert.match(send, /organizationId: tenant\.organizationId,\s*conversationId,/);
+  assert.match(send, /contact: \{ organizationId: tenant\.organizationId \}/);
+  assert.match(send, /connection: \{ organizationId: tenant\.organizationId \}/);
+  assert.match(send, /currentStatus: "DRAFT"/);
+  assert.match(send, /currentStatus: "QUEUED"/);
+  assert.match(send, /if \(claim\.count !== 1\)/);
+  assert.equal(send.match(/\.sendTextMessage\(/g)?.length, 1);
+  assert.ok(send.indexOf("claim.count !== 1") < send.indexOf(".sendTextMessage("));
+  assert.match(send, /isolationLevel: Prisma\.TransactionIsolationLevel\.Serializable/);
+});
+
+test("successful sends persist provider identity, sent state, and delivery history", async () => {
+  const actions = await read("src/features/whatsapp/server/actions.ts");
+  const send = actions.slice(actions.indexOf("export async function sendManualDraftAction("));
+  assert.match(send, /providerMessageId: result\.providerMessageId/);
+  assert.match(send, /currentStatus: "SENT"/);
+  assert.match(send, /transaction\.messageDeliveryStatus\.create\(/);
+  assert.match(send, /providerEventKey: `outbound:\$\{claimed\.messageId\}:sent`/);
+  assert.match(send, /lastOutboundAt: sentAt/);
+  assert.match(send, /SEND_OUTCOME_UNKNOWN/);
+  assert.match(send, /Do not retry this draft/);
+});
+
+test("conversation UI shows safe failed and ambiguous outbound states", async () => {
+  const queries = await read("src/features/whatsapp/server/queries.ts");
+  const page = await read("src/app/dashboard/[organizationSlug]/conversations/[conversationId]/page.tsx");
+  assert.match(queries, /lastErrorMessage: true/);
+  assert.match(page, /message\.currentStatus === "FAILED" && message\.lastErrorMessage/);
+  assert.match(page, /SEND_OUTCOME_UNKNOWN/);
+  assert.match(page, /Do not retry this draft/);
+});
+
+test("status webhooks apply delivered, read, and failed once without regressing state", async () => {
+  const worker = await read("src/features/whatsapp/server/worker.ts");
+  assert.match(worker, /delivered: MessageDeliveryState\.DELIVERED/);
+  assert.match(worker, /read: MessageDeliveryState\.READ/);
+  assert.match(worker, /failed: MessageDeliveryState\.FAILED/);
+  assert.match(worker, /messageDeliveryStatus\.upsert\(/);
+  assert.match(worker, /organizationId_providerEventKey/);
+  assert.match(worker, /statusRank\[nextStatus\] >= statusRank\[message\.currentStatus\]/);
+});
+
+test("outbound token remains server-only and is never logged or returned to the UI", async () => {
+  const gateway = await read("src/lib/whatsapp/cloud-api-gateway.ts");
+  const actions = await read("src/features/whatsapp/server/actions.ts");
+  const queries = await read("src/features/whatsapp/server/queries.ts");
+  const page = await read("src/app/dashboard/[organizationSlug]/conversations/[conversationId]/page.tsx");
+  assert.doesNotMatch(gateway, /console\./);
+  assert.doesNotMatch(actions, /console\./);
+  assert.match(actions, /decryptWhatsAppToken\(/);
+  assert.match(queries, /hasUsableToken: Boolean\(/);
+  assert.doesNotMatch(page, /tokenCiphertext|tokenIv|tokenAuthTag|tokenKeyVersion|accessToken/);
 });
 
 test("required WhatsApp environment controls are documented", async () => {

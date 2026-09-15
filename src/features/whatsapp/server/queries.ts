@@ -49,17 +49,28 @@ export function getConversations(organizationId: string) {
   });
 }
 
-export function getConversationDetail(organizationId: string, conversationId: string) {
-  return getDatabase().conversation.findFirst({
+export async function getConversationDetail(organizationId: string, conversationId: string) {
+  const conversation = await getDatabase().conversation.findFirst({
     where: { id: conversationId, organizationId, archivedAt: null },
     select: {
       id: true,
+      archivedAt: true,
       status: true,
       unreadCount: true,
       automationSuppressedAt: true,
       automationSuppressionReason: true,
       currentAssignedOrganizationMemberId: true,
-      contact: { select: { id: true, displayName: true, phoneE164: true, waId: true } },
+      contact: { select: { id: true, displayName: true, phoneE164: true, waId: true, status: true } },
+      connection: {
+        select: {
+          status: true,
+          disconnectedAt: true,
+          tokenCiphertext: true,
+          tokenIv: true,
+          tokenAuthTag: true,
+          tokenKeyVersion: true,
+        },
+      },
       lead: {
         select: {
           id: true,
@@ -98,7 +109,10 @@ export function getConversationDetail(organizationId: string, conversationId: st
           contentType: true,
           textBody: true,
           currentStatus: true,
+          lastErrorCode: true,
+          lastErrorMessage: true,
           providerTimestamp: true,
+          receivedAt: true,
           createdAt: true,
           mediaFileName: true,
           deliveryStatuses: {
@@ -109,6 +123,15 @@ export function getConversationDetail(organizationId: string, conversationId: st
       },
     },
   });
+  if (!conversation) return null;
+  const { tokenCiphertext, tokenIv, tokenAuthTag, tokenKeyVersion, ...connection } = conversation.connection;
+  return {
+    ...conversation,
+    connection: {
+      ...connection,
+      hasUsableToken: Boolean(tokenCiphertext && tokenIv && tokenAuthTag && tokenKeyVersion),
+    },
+  };
 }
 
 export function getOrganizationAssignmentOptions(organizationId: string) {

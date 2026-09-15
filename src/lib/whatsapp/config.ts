@@ -19,8 +19,11 @@ function hasValidEncryptionKey() {
   return Boolean(value && Buffer.from(value, "base64").byteLength === 32);
 }
 
-function outboundIsExplicitlyDisabled() {
-  return process.env.WHATSAPP_OUTBOUND_ENABLED?.trim().toLowerCase() === "false";
+function explicitBoolean(name: string) {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
 }
 
 function callbackUrl() {
@@ -46,8 +49,9 @@ export function getWhatsAppConfiguration() {
   if (!hasValidEncryptionKey()) {
     throw new Error("WHATSAPP_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.");
   }
-  if (!outboundIsExplicitlyDisabled()) {
-    throw new Error("WHATSAPP_OUTBOUND_ENABLED must be explicitly set to false.");
+  const outboundEnabled = explicitBoolean("WHATSAPP_OUTBOUND_ENABLED");
+  if (outboundEnabled === null) {
+    throw new Error("WHATSAPP_OUTBOUND_ENABLED must be explicitly set to true or false.");
   }
 
   return {
@@ -57,7 +61,7 @@ export function getWhatsAppConfiguration() {
     verifyToken: webhook.verifyToken,
     tokenKeyVersion: required("WHATSAPP_TOKEN_ENCRYPTION_KEY_VERSION"),
     inboundEnabled: webhook.inboundEnabled,
-    outboundEnabled: false as const,
+    outboundEnabled,
     rawRetentionDays: webhook.rawRetentionDays,
     maxAttempts: webhook.maxAttempts,
     leaseSeconds: webhook.leaseSeconds,
@@ -106,14 +110,15 @@ export function getWhatsAppAvailability() {
   if (process.env.WHATSAPP_INBOUND_ENABLED?.trim().toLowerCase() !== "true") {
     missing.push("WHATSAPP_INBOUND_ENABLED must be true");
   }
-  if (!outboundIsExplicitlyDisabled()) {
-    missing.push("WHATSAPP_OUTBOUND_ENABLED must be false");
+  const outboundEnabled = explicitBoolean("WHATSAPP_OUTBOUND_ENABLED");
+  if (process.env.WHATSAPP_OUTBOUND_ENABLED?.trim() && outboundEnabled === null) {
+    missing.push("WHATSAPP_OUTBOUND_ENABLED must be true or false");
   }
 
   return {
     configured: missing.length === 0,
     inboundEnabled: process.env.WHATSAPP_INBOUND_ENABLED === "true",
-    outboundEnabled: false as const,
+    outboundEnabled: outboundEnabled ?? false,
     missing,
   };
 }
@@ -122,8 +127,6 @@ export function getWhatsAppCallbackUrl() {
   return callbackUrl();
 }
 
-export function assertWhatsAppOutboundDisabled() {
-  if (!outboundIsExplicitlyDisabled()) {
-    throw new Error("Outbound WhatsApp delivery is disabled and must remain explicitly false.");
-  }
+export function isWhatsAppOutboundEnabled() {
+  return explicitBoolean("WHATSAPP_OUTBOUND_ENABLED") === true;
 }

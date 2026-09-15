@@ -5,6 +5,7 @@ import {
   AssignmentForm,
   ConsentForm,
   ManualDraftForm,
+  SendDraftForm,
 } from "@/features/whatsapp/components/whatsapp-forms";
 import {
   markConversationReadAction,
@@ -16,6 +17,11 @@ import {
 } from "@/features/whatsapp/server/queries";
 import { FollowUpConsentStatus, OrganizationRole } from "@/generated/prisma/enums";
 import { requireTenantContext } from "@/lib/tenancy/tenant-context";
+import { isWhatsAppOutboundEnabled } from "@/lib/whatsapp/config";
+import {
+  evaluateWhatsAppOutboundEligibility,
+  resolveLatestInboundAt,
+} from "@/lib/whatsapp/outbound-policy.mjs";
 
 type PageProps = { params: Promise<{ organizationSlug: string; conversationId: string }> };
 
@@ -35,6 +41,28 @@ export default async function ConversationPage({ params }: PageProps) {
     label: [member.user.firstName, member.user.lastName].filter(Boolean).join(" ") || member.user.email,
   }));
   const followUp = conversation.lead?.followUpState;
+  const latestInboundAt = resolveLatestInboundAt(
+    conversation.messages.filter((message) => message.direction === "INBOUND"),
+  );
+  const outboundEligibility = evaluateWhatsAppOutboundEligibility({
+    featureEnabled: isWhatsAppOutboundEnabled(),
+    role: tenant.role,
+    conversationArchived: Boolean(conversation.archivedAt),
+    connectionStatus: conversation.connection.status,
+    connectionDisconnected: Boolean(conversation.connection.disconnectedAt),
+    hasUsableToken: conversation.connection.hasUsableToken,
+    contactStatus: conversation.contact.status,
+    consentStatus: followUp?.consentStatus ?? FollowUpConsentStatus.UNKNOWN,
+    latestInboundAt,
+    now: new Date(),
+  });
+  const outboundState = {
+    canSend: outboundEligibility.canSend,
+    reason: outboundEligibility.reason,
+    windowOpen: outboundEligibility.window.isOpen,
+    message: outboundEligibility.message,
+    closesAtLabel: outboundEligibility.window.closesAt?.toLocaleString() ?? null,
+  };
 
   return (
     <div>
@@ -52,12 +80,23 @@ export default async function ConversationPage({ params }: PageProps) {
               <article key={message.id} className={`max-w-[88%] rounded-2xl border p-4 ${message.direction === "INBOUND" ? "border-border bg-surface-muted/55" : "ml-auto border-primary/20 bg-primary-muted/60"}`}>
                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-text-muted"><span>{message.direction === "INBOUND" ? contactName : message.authorType === "HUMAN" ? "Avora team" : message.authorType}</span><span>{(message.providerTimestamp ?? message.createdAt).toLocaleString()}</span></div>
                 <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.textBody ?? `${message.contentType.replaceAll("_", " ").toLowerCase()} message${message.mediaFileName ? ` · ${message.mediaFileName}` : ""}`}</p>
-                <span className={`mt-3 inline-flex text-[10px] font-semibold uppercase tracking-wider ${message.currentStatus === "DRAFT" ? "text-warning" : "text-text-muted"}`}>{message.currentStatus}</span>
+                <span className={`mt-3 inline-flex text-[10px] font-semibold uppercase tracking-wider ${message.currentStatus === "DRAFT" || message.currentStatus === "QUEUED" ? "text-warning" : message.currentStatus === "FAILED" ? "text-danger" : message.direction === "OUTBOUND" ? "text-success" : "text-text-muted"}`}>
+                  {message.direction === "INBOUND"
+                    ? "INBOUND · RECEIVED"
+                    : message.currentStatus === "DRAFT"
+                      ? "DRAFT · NOT SENT"
+                      : message.currentStatus === "QUEUED"
+                        ? "SEND PENDING · DO NOT RETRY"
+                        : `OUTBOUND · ${message.currentStatus}`}
+                </span>
                 {message.deliveryStatuses.length ? <p className="mt-2 text-[11px] text-text-muted">Delivery history: {message.deliveryStatuses.map((delivery) => delivery.status).join(" → ")}</p> : null}
+                {message.currentStatus === "FAILED" && message.lastErrorMessage ? <p className="mt-2 text-xs leading-5 text-danger">{message.lastErrorMessage}</p> : null}
+                {message.currentStatus === "QUEUED" && message.lastErrorCode === "SEND_OUTCOME_UNKNOWN" ? <p className="mt-2 text-xs leading-5 text-warning">Send result is unknown. Do not retry this draft.</p> : null}
+                {canManage && message.currentStatus === "DRAFT" ? <SendDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} messageId={message.id} outboundState={outboundState} /> : null}
               </article>
             )) : <div className="empty-state p-8 text-center text-sm">No persisted messages.</div>}
           </div>
-          {canManage ? <div className="mt-6"><ManualDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} /></div> : <p className="mt-6 rounded-2xl border border-border bg-surface-muted/40 p-4 text-sm text-text-secondary">Members can read conversations but cannot create reply drafts in Phase 1.</p>}
+          {canManage ? <div className="mt-6"><ManualDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} outboundState={outboundState} /></div> : <p className="mt-6 rounded-2xl border border-border bg-surface-muted/40 p-4 text-sm text-text-secondary">Members can read conversations but cannot draft or send WhatsApp replies.</p>}
         </section>
 
         <aside className="space-y-6">

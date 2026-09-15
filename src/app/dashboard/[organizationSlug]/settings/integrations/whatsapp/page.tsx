@@ -20,7 +20,7 @@ export default async function WhatsAppIntegrationPage({ params }: PageProps) {
     <div>
       <p className="eyebrow">Settings · Integrations</p>
       <h1 className="page-title">WhatsApp</h1>
-      <p className="page-description">Receive real customer messages into a tenant-scoped inbox. Outbound delivery and automation remain disabled.</p>
+      <p className="page-description">Receive real customer messages and control human replies in a tenant-scoped inbox. Automation remains disabled.</p>
 
       {!overview.availability.configured ? (
         <section className="mt-8 rounded-3xl border border-warning/25 bg-warning-muted p-6">
@@ -81,8 +81,17 @@ export default async function WhatsAppIntegrationPage({ params }: PageProps) {
             <p className="mt-3 text-sm leading-6 text-text-secondary">Subscribe the WABA to the <span className="font-medium text-foreground">messages</span> field. Raw verified deliveries remain private in R2 and expire automatically.</p>
           </section>
           <section className="rounded-3xl border border-border bg-surface-muted/45 p-6">
-            <p className="font-semibold">Outbound safety</p>
-            <p className="mt-2 text-sm font-medium leading-6 text-warning">Draft only — outbound WhatsApp sending is disabled.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-semibold">Outbound safety</p>
+              <span className={`status-pill ${overview.availability.outboundEnabled ? "status-success" : "status-warning"}`}>
+                {overview.availability.outboundEnabled ? "ENABLED" : "DRAFT ONLY"}
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-text-secondary">
+              {overview.availability.outboundEnabled
+                ? "Owners and admins can explicitly send saved text drafts only during the rolling 24-hour customer service window."
+                : "The server kill switch is off. Drafts remain local and no WhatsApp message API call is allowed."}
+            </p>
           </section>
         </div>
       </div>
