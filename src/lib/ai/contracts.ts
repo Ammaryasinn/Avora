@@ -7,6 +7,18 @@ export type GeneratedCopy = {
   caption: string;
 };
 
+export type GeneratedSalesReply = {
+  reply: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  handoffSuggested: boolean;
+  qualificationSuggestions: {
+    need: string | null;
+    budget: string | null;
+    timeline: string | null;
+    decisionMaker: string | null;
+  };
+};
+
 export type GeneratedImage = {
   bytes: Uint8Array;
   contentType: "image/png" | "image/jpeg" | "image/webp";
@@ -77,6 +89,11 @@ export interface TextAIProvider {
   generateText(input: TextGenerationRequest): Promise<{
     providerRequestId: string;
     variants: GeneratedCopy[];
+    usage: AIUsage;
+  }>;
+  generateSalesReply(input: Omit<TextGenerationRequest, "variantCount">): Promise<{
+    providerRequestId: string;
+    draft: GeneratedSalesReply;
     usage: AIUsage;
   }>;
 }

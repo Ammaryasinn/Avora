@@ -26,6 +26,11 @@ import {
 } from "@/lib/storage/image-validation";
 import { getBlobStore } from "@/lib/storage/r2-object-storage";
 
+import {
+  buildWhatsAppAIReplyContext,
+  createWhatsAppSalesReplyPrompt,
+} from "@/features/whatsapp/server/ai-context";
+import { whatsappAIReplyJobInputSchema } from "@/features/whatsapp/server/ai-job-input";
 import { deleteExpiredPersonReferences } from "./assets";
 import { creativeJobInputSchema } from "./job-input";
 import { reconcileJobBudget } from "./jobs";
@@ -261,6 +266,8 @@ async function storeGeneratedImage(input: {
 
 async function createTextVariants(job: Awaited<ReturnType<typeof loadJob>>, attemptId: string) {
   if (!job) return;
+  const creativeId = job.creativeId;
+  if (!creativeId) throw new Error("The creative text job has no creative subject.");
   const input = creativeJobInputSchema.parse(job.input);
   const moderation = await openAI.moderateText(input.prompt);
 
@@ -280,7 +287,7 @@ async function createTextVariants(job: Awaited<ReturnType<typeof loadJob>>, atte
       await transaction.creativeVariant.create({
         data: {
           organizationId: job.organizationId,
-          creativeId: job.creativeId,
+          creativeId,
           sourceJobId: job.id,
           createdById: job.createdById,
           name: `Copy ${position + 1}`,
@@ -306,7 +313,119 @@ async function createTextVariants(job: Awaited<ReturnType<typeof loadJob>>, atte
   });
 }
 
+async function createWhatsAppReplyDraft(
+  job: NonNullable<Awaited<ReturnType<typeof loadJob>>>,
+  attemptId: string,
+) {
+  if (!job.conversationId) throw new Error("The WhatsApp AI job has no conversation subject.");
+  const input = whatsappAIReplyJobInputSchema.parse(job.input);
+  if (input.conversationId !== job.conversationId) {
+    throw new Error("The WhatsApp AI job subject does not match its input.");
+  }
+  const context = await buildWhatsAppAIReplyContext({
+    organizationId: job.organizationId,
+    conversationId: job.conversationId,
+    requestingUserId: job.createdById,
+    sourceMessageId: input.sourceMessageId,
+  });
+  const prompt = createWhatsAppSalesReplyPrompt(context.promptContext);
+  const inputModeration = await openAI.moderateText(prompt);
+  if (!inputModeration.allowed) {
+    await getDatabase().aIJob.update({
+      where: { id: job.id },
+      data: { moderationStatus: ModerationStatus.BLOCKED },
+    });
+    throw new Error("The conversation context was blocked by content safety checks.");
+  }
+  const result = await openAI.generateSalesReply({
+    prompt,
+    safetyIdentifier: createSafetyIdentifier(job.organizationId, job.createdById),
+  });
+  const outputModeration = await openAI.moderateText(result.draft.reply);
+  if (!outputModeration.allowed) {
+    await getDatabase().aIJob.update({
+      where: { id: job.id },
+      data: { moderationStatus: ModerationStatus.BLOCKED },
+    });
+    throw new Error("The generated reply was blocked by content safety checks.");
+  }
+
+  await getDatabase().$transaction(async (transaction) => {
+    const existing = await transaction.message.findUnique({
+      where: { sourceAIJobId: job.id },
+      select: { id: true },
+    });
+    if (!existing) {
+      await transaction.message.create({
+        data: {
+          organizationId: job.organizationId,
+          connectionId: context.connectionId,
+          conversationId: context.conversationId,
+          sourceAIJobId: job.id,
+          replyToMessageId: context.sourceMessageId,
+          direction: "OUTBOUND",
+          authorType: "AI",
+          contentType: "TEXT",
+          textBody: result.draft.reply,
+          currentStatus: "DRAFT",
+          content: {
+            kind: "AI_SALES_REPLY",
+            schemaVersion: 1,
+            generatedAt: new Date().toISOString(),
+            provider: {
+              key: openAI.providerKey,
+              modelId: openAI.modelId,
+              requestId: result.providerRequestId,
+            },
+            contextVersion: input.contextVersion,
+            sourceMessageId: context.sourceMessageId,
+            productIds: context.productIds,
+            productNames: context.promptContext.products.map((product) => product.name),
+            confidence: result.draft.confidence,
+            handoffSuggested: result.draft.handoffSuggested,
+            qualificationSuggestions: result.draft.qualificationSuggestions,
+          },
+        },
+      });
+    }
+    await transaction.aIJobAttempt.update({
+      where: { id: attemptId },
+      data: {
+        status: AIJobAttemptStatus.SUCCEEDED,
+        providerRequestId: result.providerRequestId,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        usage: result.usage as Prisma.InputJsonValue,
+        completedAt: new Date(),
+      },
+    });
+    await transaction.aIJob.update({
+      where: { id: job.id },
+      data: { moderationStatus: ModerationStatus.PASSED },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        organizationId: job.organizationId,
+        actorUserId: job.createdById,
+        action: "WHATSAPP_AI_REPLY_DRAFT_CREATED",
+        entityType: "AIJob",
+        entityId: job.id,
+        correlationId: job.id,
+        metadata: {
+          conversationId: context.conversationId,
+          sourceMessageId: context.sourceMessageId,
+          productCount: context.productIds.length,
+          confidence: result.draft.confidence,
+          handoffSuggested: result.draft.handoffSuggested,
+        },
+      },
+    });
+  });
+}
+
 async function createImageVariants(job: NonNullable<Awaited<ReturnType<typeof loadJob>>>, attemptId: string) {
+  const creativeId = job.creativeId;
+  if (!creativeId) throw new Error("The image job has no creative subject.");
   const input = creativeJobInputSchema.parse(job.input);
   const promptModeration = await openAI.moderateText(input.prompt);
 
@@ -352,7 +471,7 @@ async function createImageVariants(job: NonNullable<Awaited<ReturnType<typeof lo
     const variant = await getDatabase().creativeVariant.create({
       data: {
         organizationId: job.organizationId,
-        creativeId: job.creativeId,
+        creativeId,
         sourceJobId: job.id,
         createdById: job.createdById,
         name: `Visual ${position + 1}`,
@@ -362,7 +481,13 @@ async function createImageVariants(job: NonNullable<Awaited<ReturnType<typeof lo
         content: { prompt: input.prompt },
       },
     });
-    const asset = await storeGeneratedImage({ job, attemptId, variantId: variant.id, image, position });
+    const asset = await storeGeneratedImage({
+      job: { id: job.id, organizationId: job.organizationId, creativeId },
+      attemptId,
+      variantId: variant.id,
+      image,
+      position,
+    });
 
     if (asset) {
       storedCount += 1;
@@ -395,6 +520,8 @@ async function createImageVariants(job: NonNullable<Awaited<ReturnType<typeof lo
 }
 
 async function getVirtualTryOnUrls(job: NonNullable<Awaited<ReturnType<typeof loadJob>>>) {
+  const creativeId = job.creativeId;
+  if (!creativeId) throw new Error("The virtual try-on job has no creative subject.");
   const input = creativeJobInputSchema.parse(job.input);
 
   if (!input.productMediaId || !input.personAssetId) {
@@ -410,7 +537,7 @@ async function getVirtualTryOnUrls(job: NonNullable<Awaited<ReturnType<typeof lo
       where: {
         id: input.personAssetId,
         organizationId: job.organizationId,
-        creativeId: job.creativeId,
+        creativeId,
         role: CreativeAssetRole.PERSON_REFERENCE,
         status: CreativeAssetStatus.READY,
         deletedAt: null,
@@ -433,6 +560,8 @@ async function getVirtualTryOnUrls(job: NonNullable<Awaited<ReturnType<typeof lo
 }
 
 async function processVirtualTryOn(job: NonNullable<Awaited<ReturnType<typeof loadJob>>>, attemptId: string) {
+  const creativeId = job.creativeId;
+  if (!creativeId) throw new Error("The virtual try-on job has no creative subject.");
   const attempt = job.attempts.find((item) => item.id === attemptId);
 
   if (attempt?.providerRequestId) {
@@ -453,7 +582,7 @@ async function processVirtualTryOn(job: NonNullable<Awaited<ReturnType<typeof lo
       const variant = await getDatabase().creativeVariant.create({
         data: {
           organizationId: job.organizationId,
-          creativeId: job.creativeId,
+          creativeId,
           sourceJobId: job.id,
           createdById: job.createdById,
           name: `Try-on ${position + 1}`,
@@ -463,7 +592,13 @@ async function processVirtualTryOn(job: NonNullable<Awaited<ReturnType<typeof lo
           content: { provider: "fal", requestId: attempt.providerRequestId },
         },
       });
-      const asset = await storeGeneratedImage({ job, attemptId, variantId: variant.id, image, position });
+      const asset = await storeGeneratedImage({
+        job: { id: job.id, organizationId: job.organizationId, creativeId },
+        attemptId,
+        variantId: variant.id,
+        image,
+        position,
+      });
       await getDatabase().creativeVariant.update({
         where: { id: variant.id },
         data: { status: asset ? CreativeVariantStatus.READY : CreativeVariantStatus.REJECTED },
@@ -536,7 +671,10 @@ async function releaseForProviderPolling(jobId: string, attemptId: string, provi
 async function loadJob(jobId: string, organizationId: string) {
   return getDatabase().aIJob.findFirst({
     where: { id: jobId, organizationId },
-    include: { attempts: { orderBy: { attemptNumber: "desc" } } },
+    include: {
+      attempts: { orderBy: { attemptNumber: "desc" } },
+      generatedMessage: { select: { id: true } },
+    },
   });
 }
 
@@ -592,10 +730,12 @@ async function markSuccess(job: NonNullable<Awaited<ReturnType<typeof loadJob>>>
     actualCost: job.reservedCost,
     terminalStatus: AIJobStatus.SUCCEEDED,
   });
-  await getDatabase().creative.updateMany({
-    where: { id: job.creativeId, organizationId: job.organizationId },
-    data: { status: CreativeStatus.IN_REVIEW },
-  });
+  if (job.creativeId) {
+    await getDatabase().creative.updateMany({
+      where: { id: job.creativeId, organizationId: job.organizationId },
+      data: { status: CreativeStatus.IN_REVIEW },
+    });
+  }
 }
 
 async function handleFailure(job: NonNullable<Awaited<ReturnType<typeof loadJob>>>, attemptId: string | undefined, error: unknown) {
@@ -623,10 +763,12 @@ async function handleFailure(job: NonNullable<Awaited<ReturnType<typeof loadJob>
       errorCode: current?.moderationStatus === ModerationStatus.BLOCKED ? "MODERATION_BLOCKED" : "PROVIDER_FAILURE",
       errorMessage: message,
     });
-    await getDatabase().creative.updateMany({
-      where: { id: job.creativeId, organizationId: job.organizationId },
-      data: { status: CreativeStatus.DRAFT },
-    });
+    if (job.creativeId) {
+      await getDatabase().creative.updateMany({
+        where: { id: job.creativeId, organizationId: job.organizationId },
+        data: { status: CreativeStatus.DRAFT },
+      });
+    }
     return;
   }
 
@@ -654,6 +796,11 @@ export async function processNextAIJob(workerId = `web-${randomUUID()}`) {
 
   if (!job) return { processed: false as const };
 
+  if (job.attempts.some((attempt) => attempt.status === AIJobAttemptStatus.SUCCEEDED)) {
+    await markSuccess(job);
+    return { processed: true as const, jobId: job.id, completed: true };
+  }
+
   let attemptId: string | undefined;
 
   try {
@@ -666,7 +813,11 @@ export async function processNextAIJob(workerId = `web-${randomUUID()}`) {
     let completed = true;
     switch (refreshedJob.capability) {
       case AICapability.GENERATE_TEXT:
-        await createTextVariants(refreshedJob, attempt.id);
+        if (refreshedJob.promptTemplateKey === "whatsapp-sales-reply") {
+          await createWhatsAppReplyDraft(refreshedJob, attempt.id);
+        } else {
+          await createTextVariants(refreshedJob, attempt.id);
+        }
         break;
       case AICapability.GENERATE_IMAGE:
       case AICapability.EDIT_IMAGE:

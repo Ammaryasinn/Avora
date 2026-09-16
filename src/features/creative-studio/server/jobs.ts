@@ -40,7 +40,8 @@ function requestFingerprint(input: unknown) {
 
 export async function createAIJob(input: {
   organizationId: string;
-  creativeId: string;
+  creativeId?: string;
+  conversationId?: string;
   createdById: string;
   capability: AICapability;
   idempotencyKey: string;
@@ -48,7 +49,11 @@ export async function createAIJob(input: {
   promptTemplateVersion?: number;
   jobInput: Prisma.InputJsonValue;
   requestedVariantCount: number;
+  maxAttempts?: number;
 }) {
+  if (Boolean(input.creativeId) === Boolean(input.conversationId)) {
+    throw new Error("An AI job requires exactly one supported subject.");
+  }
   assertCapabilityEnabled(input.capability);
   const configuration = getAIConfiguration();
   const estimate = new Prisma.Decimal(
@@ -70,18 +75,29 @@ export async function createAIJob(input: {
         return existing;
       }
 
-      const creative = await transaction.creative.findFirst({
-        where: {
-          id: input.creativeId,
-          organizationId: input.organizationId,
-          archivedAt: null,
-        },
-        select: { id: true },
-      });
+      const creative = input.creativeId
+        ? await transaction.creative.findFirst({
+            where: {
+              id: input.creativeId,
+              organizationId: input.organizationId,
+              archivedAt: null,
+            },
+            select: { id: true },
+          })
+        : null;
+      const conversation = input.conversationId
+        ? await transaction.conversation.findFirst({
+            where: {
+              id: input.conversationId,
+              organizationId: input.organizationId,
+              archivedAt: null,
+            },
+            select: { id: true },
+          })
+        : null;
 
-      if (!creative) {
-        throw new Error("Creative not found.");
-      }
+      if (input.creativeId && !creative) throw new Error("Creative not found.");
+      if (input.conversationId && !conversation) throw new Error("Conversation not found.");
 
       const settings = await transaction.organizationAISettings.upsert({
         where: { organizationId: input.organizationId },
@@ -125,7 +141,10 @@ export async function createAIJob(input: {
       const concurrentJobs = await transaction.aIJob.count({
         where: {
           organizationId: input.organizationId,
-          status: { in: [...activeStatuses] },
+          OR: [
+            { status: { in: [AIJobStatus.PENDING, AIJobStatus.QUEUED, AIJobStatus.RETRY_SCHEDULED] } },
+            { status: AIJobStatus.RUNNING, leaseExpiresAt: { gt: new Date() } },
+          ],
         },
       });
 
@@ -168,7 +187,8 @@ export async function createAIJob(input: {
       const created = await transaction.aIJob.create({
         data: {
           organizationId: input.organizationId,
-          creativeId: creative.id,
+          creativeId: creative?.id,
+          conversationId: conversation?.id,
           createdById: input.createdById,
           capability: input.capability,
           idempotencyKey: input.idempotencyKey,
@@ -178,6 +198,7 @@ export async function createAIJob(input: {
           input: input.jobInput,
           requestedVariantCount: input.requestedVariantCount,
           reservedCost: estimate,
+          maxAttempts: input.maxAttempts ?? 3,
         },
       });
 
@@ -186,10 +207,12 @@ export async function createAIJob(input: {
         data: { reservedCost: { increment: estimate } },
       });
 
-      await transaction.creative.updateMany({
-        where: { id: creative.id, organizationId: input.organizationId },
-        data: { status: "GENERATING" },
-      });
+      if (creative) {
+        await transaction.creative.updateMany({
+          where: { id: creative.id, organizationId: input.organizationId },
+          data: { status: "GENERATING" },
+        });
+      }
 
       return created;
     },

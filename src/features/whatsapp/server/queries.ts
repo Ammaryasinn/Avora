@@ -60,6 +60,19 @@ export async function getConversationDetail(organizationId: string, conversation
       automationSuppressedAt: true,
       automationSuppressionReason: true,
       currentAssignedOrganizationMemberId: true,
+      aiJobs: {
+        where: { promptTemplateKey: "whatsapp-sales-reply" },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          status: true,
+          errorCode: true,
+          errorMessage: true,
+          createdAt: true,
+          completedAt: true,
+        },
+      },
       contact: { select: { id: true, displayName: true, phoneE164: true, waId: true, status: true } },
       connection: {
         select: {
@@ -108,6 +121,8 @@ export async function getConversationDetail(organizationId: string, conversation
           authorType: true,
           contentType: true,
           textBody: true,
+          content: true,
+          sourceAIJobId: true,
           currentStatus: true,
           lastErrorCode: true,
           lastErrorMessage: true,

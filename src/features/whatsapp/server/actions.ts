@@ -600,6 +600,11 @@ export async function sendManualDraftAction(
   };
   try {
     claimed = await database.$transaction(async (transaction) => {
+      const membership = await transaction.organizationMember.findFirst({
+        where: { organizationId: tenant.organizationId, userId: user.id },
+        select: { id: true },
+      });
+      if (!membership) throw new OutboundValidationError("Your organization membership is unavailable.");
       const message = await transaction.message.findFirst({
         where: {
           id: parsedMessageId.data,
@@ -646,7 +651,7 @@ export async function sendManualDraftAction(
       if (
         !message ||
         message.direction !== "OUTBOUND" ||
-        message.authorType !== "HUMAN" ||
+        (message.authorType !== "HUMAN" && message.authorType !== "AI") ||
         message.contentType !== "TEXT" ||
         !message.textBody
       ) {
@@ -708,6 +713,8 @@ export async function sendManualDraftAction(
         },
         data: {
           currentStatus: "QUEUED",
+          authorType: "HUMAN",
+          authoredByOrganizationMemberId: membership.id,
           lastErrorCode: null,
           lastErrorMessage: null,
         },

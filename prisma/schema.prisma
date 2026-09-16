@@ -751,7 +751,8 @@ model CreativeAsset {
 model AIJob {
   id                    String           @id @default(cuid())
   organizationId        String
-  creativeId            String
+  creativeId            String?
+  conversationId        String?
   createdById           String
   capability            AICapability
   status                AIJobStatus      @default(PENDING)
@@ -781,16 +782,19 @@ model AIJob {
   updatedAt              DateTime         @updatedAt
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  creative     Creative          @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  creative     Creative?         @relation(fields: [creativeId], references: [id], onDelete: Cascade)
+  conversation Conversation?     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   createdBy    User              @relation("AIJobCreator", fields: [createdById], references: [id], onDelete: Restrict)
   variants     CreativeVariant[]
   attempts     AIJobAttempt[]
   assets       AIJobAsset[]
+  generatedMessage Message?      @relation("GeneratedWhatsAppReply")
 
   @@unique([organizationId, id])
   @@unique([organizationId, idempotencyKey])
   @@index([status, availableAt, leaseExpiresAt])
   @@index([organizationId, creativeId, createdAt])
+  @@index([organizationId, conversationId, createdAt])
   @@index([organizationId, status])
 }
 
@@ -1849,6 +1853,7 @@ model Conversation {
   messages Message[]
   assignments ConversationAssignment[]
   followUpState FollowUpState?
+  aiJobs AIJob[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, connectionId, conversationKey])
@@ -1888,6 +1893,7 @@ model Message {
   connectionId                 String
   conversationId               String
   sourceWebhookEventId         String?              @unique
+  sourceAIJobId                String?              @unique
   providerMessageId            String?
   direction                    MessageDirection
   authorType                   MessageAuthorType
@@ -1914,6 +1920,7 @@ model Message {
   connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sourceWebhookEvent WhatsAppWebhookEvent? @relation("InboundMessageEvent", fields: [sourceWebhookEventId], references: [id], onDelete: SetNull)
+  sourceAIJob AIJob? @relation("GeneratedWhatsAppReply", fields: [sourceAIJobId], references: [id], onDelete: SetNull)
   authoredByOrganizationMember OrganizationMember? @relation("MessageAuthorMember", fields: [authoredByOrganizationMemberId], references: [id], onDelete: SetNull)
   authoredByContact Contact? @relation("MessageAuthorContact", fields: [authoredByContactId], references: [id], onDelete: SetNull)
   replyTo Message? @relation("MessageReply", fields: [replyToMessageId], references: [id], onDelete: SetNull)

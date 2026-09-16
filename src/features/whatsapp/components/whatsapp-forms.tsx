@@ -10,6 +10,11 @@ import {
 import { initialActionState, type ActionState } from "@/lib/forms/action-state";
 
 import {
+  discardWhatsAppDraftAction,
+  generateWhatsAppAIReplyAction,
+  updateWhatsAppDraftAction,
+} from "../server/ai-actions";
+import {
   assignConversationAction,
   createManualDraftAction,
   saveWhatsAppConnectionAction,
@@ -30,6 +35,43 @@ function ActionMessage({ state }: { state: ActionState }) {
 function FieldError({ state, name }: { state: ActionState; name: string }) {
   const message = state.fieldErrors?.[name]?.[0];
   return message ? <span className="mt-1 block text-xs text-danger">{message}</span> : null;
+}
+
+export function AIReplyGenerationForm({
+  organizationSlug,
+  conversationId,
+  requestNonce,
+  active,
+  disabledReason,
+}: {
+  organizationSlug: string;
+  conversationId: string;
+  requestNonce: string;
+  active: boolean;
+  disabledReason: string | null;
+}) {
+  const [state, action, pending] = useActionState(
+    generateWhatsAppAIReplyAction.bind(null, organizationSlug, conversationId),
+    initialActionState,
+  );
+  return (
+    <form action={action} className="ai-panel rounded-2xl p-5">
+      <input name="requestNonce" type="hidden" value={requestNonce} />
+      <p className="eyebrow eyebrow-ai">AI sales assistant</p>
+      <h3 className="section-heading mt-2 text-lg">Generate a reply draft</h3>
+      <p className="mt-2 text-sm leading-6 text-text-secondary">
+        Uses recent conversation, lead, and relevant catalogue facts. AI never sends automatically.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button className="button-secondary" disabled={pending || active || Boolean(disabledReason)}>
+          {pending || active ? "Generating…" : "Generate AI reply"}
+        </button>
+        <span className="text-xs font-medium text-ai">AI-generated — review before sending</span>
+      </div>
+      {disabledReason ? <p className="mt-3 text-xs leading-5 text-warning">{disabledReason}</p> : null}
+      <div className="mt-3"><ActionMessage state={state} /></div>
+    </form>
+  );
 }
 
 export function WhatsAppConnectionForm({
@@ -268,5 +310,39 @@ export function SendDraftForm({
       <div className="mt-2"><ActionMessage state={state} /></div>
       {!outboundState.canSend ? <p className="mt-2 text-xs leading-5 text-warning">{outboundState.message}</p> : null}
     </form>
+  );
+}
+
+export function DraftEditorForm({
+  organizationSlug,
+  conversationId,
+  messageId,
+  body,
+}: {
+  organizationSlug: string;
+  conversationId: string;
+  messageId: string;
+  body: string;
+}) {
+  const [state, action, pending] = useActionState(
+    updateWhatsAppDraftAction.bind(null, organizationSlug, conversationId, messageId),
+    initialActionState,
+  );
+  return (
+    <div className="mt-3 space-y-3">
+      <form action={action}>
+        <label className="block">
+          <span className="field-label">Edit draft</span>
+          <textarea className="form-control min-h-28" name="body" defaultValue={body} />
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button className="button-secondary" disabled={pending}>{pending ? "Saving…" : "Save draft"}</button>
+          <ActionMessage state={state} />
+        </div>
+      </form>
+      <form action={discardWhatsAppDraftAction.bind(null, organizationSlug, conversationId, messageId)}>
+        <button className="text-xs font-semibold text-danger">Discard draft</button>
+      </form>
+    </div>
   );
 }

@@ -236,7 +236,7 @@ export async function retryAIJobAction(organizationSlug: string, jobId: string) 
     where: { id: jobId, organizationId: tenant.organizationId, status: AIJobStatus.FAILED },
   });
 
-  if (!job) return;
+  if (!job?.creativeId) return;
 
   await createAIJob({
     organizationId: tenant.organizationId,

@@ -25,6 +25,7 @@ Implemented now:
 - Signed, durable, idempotent WhatsApp webhooks and lease-based processing
 - Real inbound contacts, leads, conversations, messages, assignment, and consent state
 - Controlled human WhatsApp replies with a server kill switch, 24-hour window enforcement, and delivery tracking
+- Explicit AI sales-assistant reply drafts grounded in normalized conversation, lead, and catalogue facts
 
 Campaign activation, ad spend execution, automatic budget changes, optimization,
 performance analytics, Instant Forms, Meta catalogues, WhatsApp templates,
@@ -159,6 +160,7 @@ bucket CORS for the application origins and `PUT` requests with
 OPENAI_API_KEY=
 OPENAI_PROJECT_ID=
 OPENAI_TEXT_MODEL=
+OPENAI_TEXT_ENABLED=true
 OPENAI_IMAGE_MODEL=
 OPENAI_MODERATION_MODEL=omni-moderation-latest
 FAL_KEY=
@@ -308,6 +310,41 @@ member has no draft or send controls, an opted-out or blocked contact cannot
 send, and a conversation whose latest inbound message is older than 24 hours
 shows **Customer service window closed** with no enabled send control.
 
+### WhatsApp AI reply drafts
+
+Milestone 3D reuses the durable AI worker and existing organization budget,
+per-job, concurrency, and requests-per-minute controls. An owner or admin must
+click **Generate AI reply** on a conversation. The queued text job rebuilds a
+minimal server-side context from the latest 16 normalized sent/received text
+messages, lead and qualification facts, business profile, attribution, and up
+to four linked or keyword-matched active products. Archived products are never
+included; unlinked out-of-stock products are not recommended; linked
+out-of-stock products may be included only as an explicit unavailable fact.
+
+The worker moderates the context and output, then creates one
+`OUTBOUND` / `AI` / `DRAFT` message. It never calls WhatsApp and never creates a
+provider message ID or delivery history. Editing or explicitly sending the
+draft records human authorship before the existing guarded WhatsApp send path.
+Qualification suggestions remain metadata until an owner or admin clicks
+**Apply suggestions**. AI reply jobs use one attempt, so provider failures do
+not trigger hidden credit-consuming retries.
+
+In Vercel, keep `AI_TEXT_ENABLED=true`, set `OPENAI_TEXT_ENABLED=true`, and
+retain valid `OPENAI_API_KEY`, `OPENAI_TEXT_MODEL`, `OPENAI_MODERATION_MODEL`,
+`AI_WORKER_SECRET`, and AI budget/limit variables. The AI worker endpoint or
+fallback `npm run ai:worker` process must be running. Apply the database
+migration with `npx prisma migrate deploy` before deploying the application.
+
+To prove the flow in production, send a real inbound question such as “Do you
+have this in size M and how much is it?”, open the conversation, and click
+**Generate AI reply**. Confirm the resulting draft uses only actual catalogue
+facts and that no WhatsApp message arrives automatically. Edit and save the
+draft if needed, then explicitly click **Send via WhatsApp**. Confirm the
+customer receives it and Avora advances from `SENT` to `DELIVERED` and `READ`
+when those webhooks arrive. Also confirm a member cannot generate a draft and
+blocked, opted-out, wrong-tenant, disconnected, budget-exhausted, and
+concurrency-limited requests fail without creating fake output.
+
 ## Setup
 
 ```bash
@@ -323,6 +360,7 @@ Migrations in this repository:
 - `20260911122955_milestone_2b_campaign_builder`
 - `20260911142248_milestone_2c_meta_ads`
 - `20260912092915_milestone_3a_whatsapp_conversations_leads`
+- `20260915160000_milestone_3d_whatsapp_ai_drafts`
 
 For a new schema change during development, use:
 

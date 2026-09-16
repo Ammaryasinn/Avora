@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import type {
   GeneratedCopy,
+  GeneratedSalesReply,
   ImageAIProvider,
   ImageEditRequest,
   ImageGenerationRequest,
@@ -46,6 +47,40 @@ const copyJsonSchema = {
     },
   },
   required: ["variants"],
+} as const;
+
+const salesReplySchema = z.object({
+  reply: z.string().trim().min(1).max(4_000),
+  confidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  handoffSuggested: z.boolean(),
+  qualificationSuggestions: z.object({
+    need: z.string().trim().max(500).nullable(),
+    budget: z.string().trim().max(200).nullable(),
+    timeline: z.string().trim().max(200).nullable(),
+    decisionMaker: z.string().trim().max(200).nullable(),
+  }),
+});
+
+const salesReplyJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    reply: { type: "string" },
+    confidence: { type: "string", enum: ["HIGH", "MEDIUM", "LOW"] },
+    handoffSuggested: { type: "boolean" },
+    qualificationSuggestions: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        need: { type: ["string", "null"] },
+        budget: { type: ["string", "null"] },
+        timeline: { type: ["string", "null"] },
+        decisionMaker: { type: ["string", "null"] },
+      },
+      required: ["need", "budget", "timeline", "decisionMaker"],
+    },
+  },
+  required: ["reply", "confidence", "handoffSuggested", "qualificationSuggestions"],
 } as const;
 
 function imageSize(aspectRatio: "1:1" | "4:5" | "9:16") {
@@ -139,6 +174,33 @@ export class OpenAIProvider implements TextAIProvider, ImageAIProvider {
     return {
       providerRequestId: response.id,
       variants: parsed.variants.slice(0, input.variantCount) as GeneratedCopy[],
+      usage: {
+        inputTokens: response.usage?.input_tokens,
+        outputTokens: response.usage?.output_tokens,
+      },
+    };
+  }
+
+  async generateSalesReply(input: Omit<TextGenerationRequest, "variantCount">) {
+    const response = await getClient().responses.create({
+      model: getAIConfiguration().openAI.textModel,
+      input: input.prompt,
+      store: false,
+      safety_identifier: input.safetyIdentifier,
+      text: {
+        verbosity: "low",
+        format: {
+          type: "json_schema",
+          name: "avora_whatsapp_sales_reply",
+          strict: true,
+          schema: salesReplyJsonSchema,
+        },
+      },
+    });
+    const draft = salesReplySchema.parse(JSON.parse(response.output_text)) as GeneratedSalesReply;
+    return {
+      providerRequestId: response.id,
+      draft,
       usage: {
         inputTokens: response.usage?.input_tokens,
         outputTokens: response.usage?.output_tokens,

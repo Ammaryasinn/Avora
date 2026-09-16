@@ -1,12 +1,19 @@
+import { randomUUID } from "node:crypto";
+
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AutoRefresh } from "@/features/creative-studio/components/auto-refresh";
+import { parseAIDraftMetadata } from "@/features/whatsapp/ai-draft-metadata";
 import {
+  AIReplyGenerationForm,
   AssignmentForm,
   ConsentForm,
+  DraftEditorForm,
   ManualDraftForm,
   SendDraftForm,
 } from "@/features/whatsapp/components/whatsapp-forms";
+import { applyAIQualificationSuggestionAction } from "@/features/whatsapp/server/ai-actions";
 import {
   markConversationReadAction,
   releaseConversationAssignmentAction,
@@ -16,6 +23,7 @@ import {
   getOrganizationAssignmentOptions,
 } from "@/features/whatsapp/server/queries";
 import { FollowUpConsentStatus, OrganizationRole } from "@/generated/prisma/enums";
+import { getTextAIAvailability } from "@/lib/ai/config";
 import { requireTenantContext } from "@/lib/tenancy/tenant-context";
 import { isWhatsAppOutboundEnabled } from "@/lib/whatsapp/config";
 import {
@@ -63,9 +71,21 @@ export default async function ConversationPage({ params }: PageProps) {
     message: outboundEligibility.message,
     closesAtLabel: outboundEligibility.window.closesAt?.toLocaleString() ?? null,
   };
+  const activeAIJob = conversation.aiJobs.some((job) => ["PENDING", "QUEUED", "RUNNING", "RETRY_SCHEDULED"].includes(job.status));
+  const latestAIJob = conversation.aiJobs[0];
+  const aiDisabledReason = !getTextAIAvailability().available
+    ? "AI text generation is currently unavailable."
+    : conversation.contact.status === "BLOCKED" || conversation.contact.status === "ARCHIVED"
+      ? "AI replies are unavailable for this contact."
+      : followUp?.consentStatus === FollowUpConsentStatus.OPTED_OUT
+        ? "This contact has opted out of WhatsApp follow-up."
+        : conversation.connection.status !== "CONNECTED" || conversation.connection.disconnectedAt
+          ? "The WhatsApp connection is unavailable."
+          : null;
 
   return (
     <div>
+      <AutoRefresh active={activeAIJob} />
       <Link href={`/dashboard/${organizationSlug}/conversations`} className="back-link">← Conversations</Link>
       <header className="mt-7 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
         <div><p className="eyebrow">WhatsApp conversation</p><h1 className="page-title">{contactName}</h1><p className="page-description">{conversation.contact.phoneE164 ?? conversation.contact.waId}</p></div>
@@ -75,26 +95,40 @@ export default async function ConversationPage({ params }: PageProps) {
       <div className="mt-8 grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
         <section className="premium-panel rounded-3xl p-5 sm:p-7">
           <div className="flex items-center justify-between gap-3"><div><p className="eyebrow">Thread</p><h2 className="section-heading mt-2 text-xl">Message history</h2></div>{canManage && conversation.unreadCount ? <form action={markConversationReadAction.bind(null, organizationSlug, conversation.id)}><button className="button-secondary">Mark read</button></form> : null}</div>
+          {canManage ? <div className="mt-6"><AIReplyGenerationForm organizationSlug={organizationSlug} conversationId={conversation.id} requestNonce={randomUUID()} active={activeAIJob} disabledReason={aiDisabledReason} /></div> : null}
+          {latestAIJob?.status === "FAILED" ? <p className="mt-3 rounded-xl border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{latestAIJob.errorCode === "MODERATION_BLOCKED" ? "AI generation was blocked by content safety checks." : "AI could not generate a reply. No draft was created."}</p> : null}
           <div className="mt-6 space-y-4">
-            {conversation.messages.length ? conversation.messages.map((message) => (
-              <article key={message.id} className={`max-w-[88%] rounded-2xl border p-4 ${message.direction === "INBOUND" ? "border-border bg-surface-muted/55" : "ml-auto border-primary/20 bg-primary-muted/60"}`}>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-text-muted"><span>{message.direction === "INBOUND" ? contactName : message.authorType === "HUMAN" ? "Avora team" : message.authorType}</span><span>{(message.providerTimestamp ?? message.createdAt).toLocaleString()}</span></div>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.textBody ?? `${message.contentType.replaceAll("_", " ").toLowerCase()} message${message.mediaFileName ? ` · ${message.mediaFileName}` : ""}`}</p>
-                <span className={`mt-3 inline-flex text-[10px] font-semibold uppercase tracking-wider ${message.currentStatus === "DRAFT" || message.currentStatus === "QUEUED" ? "text-warning" : message.currentStatus === "FAILED" ? "text-danger" : message.direction === "OUTBOUND" ? "text-success" : "text-text-muted"}`}>
-                  {message.direction === "INBOUND"
-                    ? "INBOUND · RECEIVED"
-                    : message.currentStatus === "DRAFT"
-                      ? "DRAFT · NOT SENT"
-                      : message.currentStatus === "QUEUED"
-                        ? "SEND PENDING · DO NOT RETRY"
-                        : `OUTBOUND · ${message.currentStatus}`}
-                </span>
-                {message.deliveryStatuses.length ? <p className="mt-2 text-[11px] text-text-muted">Delivery history: {message.deliveryStatuses.map((delivery) => delivery.status).join(" → ")}</p> : null}
-                {message.currentStatus === "FAILED" && message.lastErrorMessage ? <p className="mt-2 text-xs leading-5 text-danger">{message.lastErrorMessage}</p> : null}
-                {message.currentStatus === "QUEUED" && message.lastErrorCode === "SEND_OUTCOME_UNKNOWN" ? <p className="mt-2 text-xs leading-5 text-warning">Send result is unknown. Do not retry this draft.</p> : null}
-                {canManage && message.currentStatus === "DRAFT" ? <SendDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} messageId={message.id} outboundState={outboundState} /> : null}
-              </article>
-            )) : <div className="empty-state p-8 text-center text-sm">No persisted messages.</div>}
+            {conversation.messages.length ? conversation.messages.map((message) => {
+              const aiMetadata = parseAIDraftMetadata(message.content);
+              const suggestions = aiMetadata ? Object.entries(aiMetadata.qualificationSuggestions).filter((entry): entry is [string, string] => Boolean(entry[1])) : [];
+              return (
+                <article key={message.id} className={`max-w-[88%] rounded-2xl border p-4 ${message.direction === "INBOUND" ? "border-border bg-surface-muted/55" : aiMetadata && message.currentStatus === "DRAFT" ? "ml-auto border-ai/25 bg-ai-muted/70" : "ml-auto border-primary/20 bg-primary-muted/60"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-text-muted">
+                    <span>{message.direction === "INBOUND" ? contactName : aiMetadata && message.currentStatus === "DRAFT" ? "AI suggested reply" : message.authorType === "HUMAN" ? "Avora team" : message.authorType}</span>
+                    <span>{(message.providerTimestamp ?? message.createdAt).toLocaleString()}</span>
+                  </div>
+                  {aiMetadata && message.currentStatus === "DRAFT" ? <p className="mt-2 text-xs font-semibold text-ai">AI-generated — review before sending · {aiMetadata.confidence.toLowerCase()} confidence</p> : null}
+                  {message.currentStatus === "DRAFT" && message.textBody && canManage
+                    ? <DraftEditorForm organizationSlug={organizationSlug} conversationId={conversation.id} messageId={message.id} body={message.textBody} />
+                    : <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{message.textBody ?? `${message.contentType.replaceAll("_", " ").toLowerCase()} message${message.mediaFileName ? ` · ${message.mediaFileName}` : ""}`}</p>}
+                  {aiMetadata?.productNames.length ? <div className="mt-3 flex flex-wrap gap-2">{aiMetadata.productNames.map((name) => <span key={name} className="rounded-full border border-ai/20 bg-surface/70 px-2.5 py-1 text-[11px] font-medium text-ai">{name}</span>)}</div> : null}
+                  {suggestions.length && message.currentStatus === "DRAFT" ? <div className="mt-3 rounded-xl border border-ai/15 bg-surface/65 p-3"><p className="text-xs font-semibold text-ai">Suggested lead updates</p>{suggestions.map(([field, value]) => <p key={field} className="mt-1 text-xs text-text-secondary">{field}: {value}</p>)}{canManage && conversation.lead ? <form className="mt-3" action={applyAIQualificationSuggestionAction.bind(null, organizationSlug, conversation.id, message.id)}><button className="text-xs font-semibold text-ai">Apply suggestions</button></form> : null}</div> : null}
+                  <span className={`mt-3 inline-flex text-[10px] font-semibold uppercase tracking-wider ${message.currentStatus === "DRAFT" || message.currentStatus === "QUEUED" ? "text-warning" : message.currentStatus === "FAILED" ? "text-danger" : message.direction === "OUTBOUND" ? "text-success" : "text-text-muted"}`}>
+                    {message.direction === "INBOUND"
+                      ? "INBOUND · RECEIVED"
+                      : message.currentStatus === "DRAFT"
+                        ? "DRAFT · NOT SENT"
+                        : message.currentStatus === "QUEUED"
+                          ? "SEND PENDING · DO NOT RETRY"
+                          : `OUTBOUND · ${message.currentStatus}`}
+                  </span>
+                  {message.deliveryStatuses.length ? <p className="mt-2 text-[11px] text-text-muted">Delivery history: {message.deliveryStatuses.map((delivery) => delivery.status).join(" → ")}</p> : null}
+                  {message.currentStatus === "FAILED" && message.lastErrorMessage ? <p className="mt-2 text-xs leading-5 text-danger">{message.lastErrorMessage}</p> : null}
+                  {message.currentStatus === "QUEUED" && message.lastErrorCode === "SEND_OUTCOME_UNKNOWN" ? <p className="mt-2 text-xs leading-5 text-warning">Send result is unknown. Do not retry this draft.</p> : null}
+                  {canManage && message.currentStatus === "DRAFT" ? <SendDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} messageId={message.id} outboundState={outboundState} /> : null}
+                </article>
+              );
+            }) : <div className="empty-state p-8 text-center text-sm">No persisted messages.</div>}
           </div>
           {canManage ? <div className="mt-6"><ManualDraftForm organizationSlug={organizationSlug} conversationId={conversation.id} outboundState={outboundState} /></div> : <p className="mt-6 rounded-2xl border border-border bg-surface-muted/40 p-4 text-sm text-text-secondary">Members can read conversations but cannot draft or send WhatsApp replies.</p>}
         </section>

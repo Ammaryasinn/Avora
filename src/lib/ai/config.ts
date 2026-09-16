@@ -86,7 +86,7 @@ export function getAIConfiguration() {
       personRetentionDays: positiveNumber("AI_PERSON_REFERENCE_RETENTION_DAYS", 7),
     },
     capabilities: {
-      text: enabled("AI_TEXT_ENABLED"),
+      text: enabled("AI_TEXT_ENABLED") && enabled("OPENAI_TEXT_ENABLED"),
       image: enabled("AI_IMAGE_ENABLED"),
       imageEdit: enabled("AI_IMAGE_EDIT_ENABLED"),
       virtualTryOn: enabled("AI_VIRTUAL_TRY_ON_ENABLED"),
@@ -122,5 +122,15 @@ export function assertCapabilityEnabled(capability: AICapability) {
 
   if (!enabledForCapability[capability]) {
     throw new Error("This AI capability is currently unavailable.");
+  }
+}
+
+export function getTextAIAvailability() {
+  try {
+    return {
+      available: getAIConfiguration().capabilities.text && Boolean(process.env.OPENAI_API_KEY?.trim()),
+    };
+  } catch {
+    return { available: false };
   }
 }
